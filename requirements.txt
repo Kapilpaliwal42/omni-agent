@@ -1,0 +1,5 @@
+# Optional: the core agent, skills, MCP and web tools use only the standard library.
+playwright>=1.48      # browser toolset (uses installed Microsoft Edge; no browser download needed)
+pywinauto>=0.6.8      # desktop toolset (Windows UI Automation)
+pyautogui>=0.9.54     # desktop fallback input
+pillow>=10.0          # screenshots

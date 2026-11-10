@@ -1,0 +1,5 @@
+.venv/
+.omni/
+__pycache__/
+*.pyc
+.self-rules.md

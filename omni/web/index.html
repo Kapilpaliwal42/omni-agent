@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>omni-agent</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23d97757'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%231f1e1d'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #1f1e1d; --panel: #262624; --panel2: #2d2c2a; --line: #3a3936; --text: #ecebe7; --muted: #a3a19a;
+  --faint: #75736d; --accent: #d97757; --accent-2: #e8957a; --ok: #6bbf7a; --err: #e26d5c; --warn: #e3b04b;
+  --code: #1a1918; --user: #34322f; --add: rgba(107,191,122,.14); --del: rgba(226,109,92,.14);
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #faf9f5; --panel: #f3f1ea; --panel2: #ebe8df; --line: #dedad0; --text: #1f1e1d; --muted: #5f5d57;
+    --faint: #8f8c84; --accent: #c4623f; --accent-2: #b4552f; --ok: #2f8a43; --err: #c0392b; --warn: #a77a12;
+    --code: #f0ede5; --user: #ece9e0; --add: rgba(47,138,67,.12); --del: rgba(192,57,43,.1); color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #faf9f5; --panel: #f3f1ea; --panel2: #ebe8df; --line: #dedad0; --text: #1f1e1d; --muted: #5f5d57;
+  --faint: #8f8c84; --accent: #c4623f; --accent-2: #b4552f; --ok: #2f8a43; --err: #c0392b; --warn: #a77a12;
+  --code: #f0ede5; --user: #ece9e0; --add: rgba(47,138,67,.12); --del: rgba(192,57,43,.1); color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.55 var(--sans); display: flex; overflow: hidden; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input, select, textarea { font: inherit; color: var(--text); }
+
+/* ---------- sidebar */
+#side { width: 272px; flex: none; background: var(--panel); border-right: 1px solid var(--line); display: flex;
+        flex-direction: column; overflow: hidden; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; font-weight: 600; font-size: 15px; }
+.brand .dot { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); position: relative; }
+.brand .dot::after { content: ""; position: absolute; inset: 6px; border-radius: 50%; background: var(--panel); }
+.brand .ver { color: var(--faint); font-weight: 400; font-size: 12px; margin-left: auto; }
+#newchat { margin: 0 12px 10px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel2); text-align: left; display: flex; gap: 8px; align-items: center; }
+#newchat:hover { border-color: var(--accent); }
+.side-scroll { overflow-y: auto; flex: 1; padding: 0 12px 16px; }
+.sec { margin-top: 14px; }
+.sec h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); margin: 0 0 6px 2px;
+          font-weight: 600; display: flex; justify-content: space-between; }
+.field { display: flex; gap: 6px; }
+.field input, .field select { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px;
+                              padding: 6px 8px; font-size: 12.5px; }
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+.small-btn { background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; font-size: 12px; }
+.small-btn:hover { border-color: var(--accent); }
+.seg { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.seg button { flex: 1; border: 0; background: none; padding: 5px 0; border-radius: 6px; font-size: 12.5px; color: var(--muted); }
+.seg button.on { background: var(--panel2); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+.seg button.on[data-mode="yolo"] { color: var(--warn); }
+.hint { color: var(--faint); font-size: 11.5px; margin: 5px 2px 0; }
+.toggle { display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 2px 2px; }
+.switch { width: 32px; height: 18px; border-radius: 9px; background: var(--line); position: relative; border: 0; flex: none; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+                 background: var(--text); transition: left .15s; }
+.switch.on { background: var(--accent); }
+.switch.on::after { left: 16px; }
+.items { display: flex; flex-direction: column; gap: 2px; }
+.item { padding: 6px 8px; border-radius: 7px; font-size: 12.5px; display: flex; gap: 8px; align-items: flex-start; }
+.item:hover { background: var(--panel2); }
+.item .nm { font-weight: 550; }
+.item .ds { color: var(--muted); font-size: 11.5px; display: block; }
+.item.click { cursor: pointer; }
+.led { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; margin-top: 6px; }
+.led.bad { background: var(--err); }
+.empty { color: var(--faint); font-size: 12px; padding: 2px 8px; }
+
+/* ---------- main */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#top { height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 18px;
+       border-bottom: 1px solid var(--line); }
+#menu { display: none; border: 0; background: none; font-size: 18px; padding: 4px 6px; }
+#wsname { font-family: var(--mono); font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+#status .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+#status.busy .pulse { background: var(--accent); animation: pulse 1.2s infinite; }
+#status.off .pulse { background: var(--err); }
+@keyframes pulse { 50% { opacity: .35; } }
+#theme { border: 0; background: none; color: var(--muted); padding: 4px; font-size: 15px; }
+
+#scroll { flex: 1; overflow-y: auto; }
+#log { max-width: 860px; margin: 0 auto; padding: 22px 24px 30px; display: flex; flex-direction: column; gap: 10px; }
+.welcome { margin: 9vh auto 0; text-align: center; color: var(--muted); max-width: 560px; }
+.welcome h1 { color: var(--text); font-weight: 500; font-size: 26px; margin: 0 0 6px; font-family: Georgia, "Times New Roman", serif; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 22px; }
+.chip { border: 1px solid var(--line); background: var(--panel); padding: 8px 12px; border-radius: 10px; font-size: 13px;
+        text-align: left; max-width: 260px; }
+.chip:hover { border-color: var(--accent); }
+
+.msg-user { align-self: flex-end; background: var(--user); padding: 9px 14px; border-radius: 14px 14px 4px 14px;
+            max-width: 82%; white-space: pre-wrap; word-wrap: break-word; }
+.msg-agent { padding: 2px 2px; word-wrap: break-word; }
+.msg-agent p { margin: 0 0 8px; }
+.msg-agent pre, .pre { background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+                       overflow-x: auto; font: 12.5px/1.5 var(--mono); margin: 6px 0; white-space: pre; }
+.msg-agent code { font-family: var(--mono); font-size: 12.5px; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+.msg-agent pre code { background: none; padding: 0; }
+.note { color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 8px; }
+.note::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+.note.warn::before { background: var(--warn); }
+
+.card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.card-h { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: 13px; }
+.card-h .t { font-weight: 600; }
+.card-b { padding: 0 12px 10px; }
+
+.plan ol { margin: 0; padding: 0 12px 10px 12px; list-style: none; counter-reset: s; }
+.plan li { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; color: var(--muted); }
+.plan li .box { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--faint); flex: none; margin-top: 2px;
+                display: grid; place-items: center; font-size: 10px; }
+.plan li.active { color: var(--text); }
+.plan li.active .box { border-color: var(--accent); border-top-color: transparent; animation: spin .9s linear infinite; }
+.plan li.done { color: var(--text); }
+.plan li.done .box { background: var(--ok); border-color: var(--ok); color: var(--bg); }
+.plan li.done .box::after { content: "✓"; font-weight: 700; }
+.plan li.fail .box { background: var(--warn); border-color: var(--warn); color: var(--bg); }
+.plan li.fail .box::after { content: "!"; font-weight: 700; }
+.plan li .nt { display: block; color: var(--faint); font-size: 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.step-div { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 11.5px; text-transform: uppercase;
+            letter-spacing: .05em; margin-top: 6px; }
+.step-div::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+.tool { border: 1px solid var(--line); border-radius: 9px; background: var(--panel); font-size: 13px; }
+.tool > summary { list-style: none; display: flex; align-items: center; gap: 9px; padding: 7px 11px; cursor: pointer; }
+.tool > summary::-webkit-details-marker { display: none; }
+.tool .ic { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font: 600 10px var(--mono);
+            background: var(--panel2); color: var(--accent); flex: none; }
+.tool .nm { font: 600 12.5px var(--mono); }
+.tool .arg { font: 12.5px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.tool .st { margin-left: auto; flex: none; font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 5px; }
+.tool .st.ok { color: var(--ok); } .tool .st.err { color: var(--err); }
+.spinner { width: 12px; height: 12px; border: 1.5px solid var(--faint); border-top-color: var(--accent); border-radius: 50%;
+           animation: spin .8s linear infinite; display: inline-block; }
+.tool .body { padding: 0 11px 10px; }
+.tool .lbl { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; margin: 6px 0 2px; }
+.tool .pre { max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.child { margin-left: 22px; position: relative; }
+.child::before { content: ""; position: absolute; left: -12px; top: 0; bottom: 0; width: 2px; background: var(--line); border-radius: 1px; }
+
+.confirm { border-color: var(--warn); }
+.confirm .card-h { color: var(--warn); }
+.confirm .txt { font: 12.5px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; color: var(--text);
+                background: var(--code); border-radius: 7px; padding: 8px 10px; max-height: 260px; overflow: auto; }
+.confirm .acts { display: flex; gap: 8px; margin-top: 10px; }
+.btn { border-radius: 8px; padding: 6px 14px; border: 1px solid var(--line); background: var(--panel2); font-size: 13px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-2); }
+.btn:hover { border-color: var(--accent); }
+.confirm.answered { border-color: var(--line); }
+.confirm.answered .card-h { color: var(--muted); }
+.decision { font-size: 12.5px; margin-top: 8px; }
+.decision.yes { color: var(--ok); } .decision.no { color: var(--err); }
+
+.result .badge { font: 600 11px var(--mono); padding: 2px 8px; border-radius: 999px; letter-spacing: .03em; }
+.badge.passed { background: var(--add); color: var(--ok); }
+.badge.failed { background: var(--del); color: var(--err); }
+.badge.none { background: var(--panel2); color: var(--muted); }
+.result ul { margin: 0; padding: 0 0 0 18px; font-size: 13px; }
+.result li { margin: 3px 0; }
+.result li span { color: var(--muted); }
+
+.diff { font: 12px/1.45 var(--mono); background: var(--code); border: 1px solid var(--line); border-radius: 8px;
+        overflow: auto; max-height: 460px; padding: 8px 0; }
+.diff div { padding: 0 12px; white-space: pre; }
+.diff .a { background: var(--add); color: var(--ok); }
+.diff .d { background: var(--del); color: var(--err); }
+.diff .h { color: var(--accent); }
+.question { border-color: var(--accent); }
+.question .card-h { color: var(--accent); }
+.question .q { font-size: 14px; margin-bottom: 8px; }
+.question .row, .feedback .row { display: flex; gap: 8px; }
+.question input, .feedback input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+                                   padding: 6px 10px; font-size: 13px; }
+.question input:focus, .feedback input:focus { outline: none; border-color: var(--accent); }
+.reqs ul { list-style: none; margin: 0; padding: 0 12px 10px; }
+.reqs li { display: flex; gap: 9px; padding: 3px 0; font-size: 13px; }
+.reqs li .mk { width: 16px; flex: none; text-align: center; color: var(--faint); font-weight: 700; }
+.reqs li.met .mk { color: var(--ok); } .reqs li.unmet .mk { color: var(--err); }
+.reqs li .ev { display: block; color: var(--faint); font-size: 12px; }
+.reqs .task { padding: 0 12px 6px; color: var(--muted); font-size: 12.5px; }
+.feedback { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 10px; }
+.feedback .lbl2 { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.sched-tag { display: inline-block; font-size: 11px; color: var(--accent); margin-bottom: 3px; font-weight: 600; }
+.item .acts2 { margin-left: auto; display: flex; gap: 2px; flex: none; }
+.item .acts2 button { border: 0; background: none; color: var(--faint); padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+.item .acts2 button:hover { color: var(--text); background: var(--line); }
+.item.paused .nm { color: var(--faint); text-decoration: line-through; }
+.errbox { border: 1px solid var(--err); background: var(--del); border-radius: 9px; padding: 9px 12px; white-space: pre-wrap;
+          font: 12.5px var(--mono); }
+
+/* ---------- composer */
+#composer { flex: none; padding: 10px 24px 18px; }
+.cbox { max-width: 860px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+        padding: 10px 10px 8px 14px; position: relative; box-shadow: 0 4px 18px rgba(0,0,0,.12); }
+.cbox:focus-within { border-color: var(--accent); }
+#input { width: 100%; border: 0; background: none; resize: none; outline: none; max-height: 220px; min-height: 24px;
+         line-height: 1.5; padding: 2px 0; }
+.cbar { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.cbar .meta { font-size: 11.5px; color: var(--faint); display: flex; gap: 10px; overflow: hidden; white-space: nowrap; }
+.cbar .meta b { color: var(--muted); font-weight: 500; }
+#send { margin-left: auto; width: 32px; height: 32px; border-radius: 9px; border: 0; background: var(--accent); color: #fff;
+        display: grid; place-items: center; flex: none; }
+#send:disabled { opacity: .4; cursor: default; }
+#send.stop { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+#slash { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 6px); background: var(--panel); border: 1px solid var(--line);
+         border-radius: 10px; padding: 4px; display: none; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+#slash div { padding: 6px 10px; border-radius: 7px; font-size: 13px; display: flex; gap: 12px; cursor: pointer; }
+#slash div b { font: 600 12.5px var(--mono); color: var(--accent); min-width: 80px; }
+#slash div span { color: var(--muted); }
+#slash div.sel, #slash div:hover { background: var(--panel2); }
+
+@media (max-width: 820px) {
+  #side { position: fixed; z-index: 10; inset: 0 auto 0 0; transform: translateX(-100%); transition: transform .2s; }
+  body.side-open #side { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.4); }
+  #menu { display: block; }
+  #log { padding: 16px; } #composer { padding: 8px 12px 12px; }
+}
+</style>
+</head>
+<body>
+<aside id="side">
+  <div class="brand"><span class="dot"></span>omni-agent<span class="ver" id="modelshort"></span></div>
+  <button id="newchat"><span>＋</span> New conversation</button>
+  <div class="side-scroll">
+    <div class="sec">
+      <h3>Workspace</h3>
+      <div class="field"><input id="ws" spellcheck="false"><button class="small-btn" id="wsset">Set</button></div>
+    </div>
+    <div class="sec">
+      <h3>Model</h3>
+      <div class="field"><select id="model"></select></div>
+    </div>
+    <div class="sec">
+      <h3>Permissions</h3>
+      <div class="seg" id="mode">
+        <button data-mode="ask" title="Confirm every command, edit and action">Ask</button>
+        <button data-mode="auto" title="Confirm only risky actions">Auto</button>
+        <button data-mode="yolo" title="Confirm only self-changes and installs">Yolo</button>
+      </div>
+      <div class="hint" id="modehint"></div>
+    </div>
+    <div class="sec">
+      <div class="toggle"><span>Plan before acting</span><button class="switch" id="plan" aria-label="Plan before acting"></button></div>
+    </div>
+    <div class="sec"><h3>Scheduled tasks <span id="scc"></span></h3><div class="items" id="schedules"></div></div>
+    <div class="sec"><h3>Learned preferences <span id="prc"></span></h3><div class="items" id="prefs"></div></div>
+    <div class="sec"><h3>Always allowed <span id="alc"></span></h3><div class="items" id="allowed"></div></div>
+    <div class="sec"><h3>Skills <span id="skc"></span></h3><div class="items" id="skills"></div></div>
+    <div class="sec"><h3>MCP servers <span id="mcc"></span></h3><div class="items" id="mcp"></div></div>
+    <div class="sec"><h3>Memory <span id="mec"></span></h3><div class="items" id="memory"></div></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div id="top">
+    <button id="menu" aria-label="Menu">☰</button>
+    <span id="wsname"></span>
+    <div id="status"><span class="pulse"></span><span id="stext">Connecting…</span></div>
+    <button id="theme" title="Toggle theme">◐</button>
+  </div>
+  <div id="scroll"><div id="log"></div></div>
+  <div id="composer">
+    <div class="cbox">
+      <div id="slash"></div>
+      <textarea id="input" rows="1" placeholder="Ask omni to do something…  ( / for commands )"></textarea>
+      <div class="cbar">
+        <div class="meta"><span>mode <b id="m-mode"></b></span><span>plan <b id="m-plan"></b></span><span>↵ send · ⇧↵ newline</span></div>
+        <button id="send" title="Send"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const TOKEN = "__OMNI_TOKEN__";
+const $ = s => document.querySelector(s);
+const logEl = $("#log"), scrollEl = $("#scroll"), input = $("#input"), sendBtn = $("#send");
+let lastSeq = 0, instance = null, busy = false, state = null, connected = false;
+let busySince = 0, statusText = "Idle", planCard = null, stepCount = 0, slashSel = 0;
+const tools = new Map(), confirms = new Map();
+
+const MODE_HINT = {
+  ask: "Every command, file edit and action asks first.",
+  auto: "Risky commands, desktop control and Buy/Send/Delete clicks ask first.",
+  yolo: "Runs freely. Self-changes and installs still ask. Use a VM.",
+};
+const EXAMPLES = [
+  "Search the web for the latest Ollama release and summarize what changed into ollama.md",
+  "Open github.com/trending in the browser and list the top 5 Python repos",
+  "Every weekday at 09:00, check the BBC tech headlines and save the top 5 to news.md",
+  "Add the MCP filesystem server for my Documents folder",
+];
+let reqCard = null;
+
+function api(path, body) {
+  return fetch(path, { method: body ? "POST" : "GET",
+    headers: { "X-Omni-Token": TOKEN, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined })
+    .then(async r => ({ status: r.status, ...(await r.json().catch(() => ({}))) }));
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+// Small, safe markdown: everything is escaped first, then a few patterns are re-enabled.
+function md(src) {
+  const parts = String(src).split(/```(\w*)\n?([\s\S]*?)```/g);
+  let out = "";
+  for (let i = 0; i < parts.length; i += 3) {
+    let t = esc(parts[i]);
+    t = t.replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+         .replace(/^#{1,4} (.+)$/gm, "<strong>$1</strong>").replace(/^\s*[-*] (.+)$/gm, "• $1");
+    out += t.split(/\n{2,}/).map(p => p.trim() ? `<p>${p.replace(/\n/g, "<br>")}</p>` : "").join("");
+    if (i + 2 < parts.length) out += `<pre><code>${esc(parts[i + 2])}</code></pre>`;
+  }
+  return out;
+}
+
+// ---------- scrolling
+function nearBottom() { return scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 120; }
+function add(node, child) {
+  const stick = nearBottom();
+  if (child) node.classList.add("child");
+  document.querySelector(".welcome")?.remove();
+  logEl.appendChild(node);
+  if (stick) scrollEl.scrollTop = scrollEl.scrollHeight;
+  return node;
+}
+function keepBottom(fn) { const s = nearBottom(); fn(); if (s) scrollEl.scrollTop = scrollEl.scrollHeight; }
+
+function welcome() {
+  logEl.innerHTML = "";
+  const w = el("div", "welcome");
+  w.innerHTML = "<h1>What should we work on?</h1><div>Files, shell, web, a real browser, your Windows apps, learned skills and MCP servers, all on your local model.</div>";
+  const chips = el("div", "chips");
+  EXAMPLES.forEach(x => { const c = el("button", "chip", x); c.onclick = () => { input.value = x; autosize(); input.focus(); }; chips.appendChild(c); });
+  w.appendChild(chips);
+  logEl.appendChild(w);
+}
+
+// ---------- status
+function setStatus(t) { statusText = t; renderStatus(); }
+function renderStatus() {
+  const s = $("#status");
+  s.classList.toggle("busy", busy); s.classList.toggle("off", !connected);
+  let t = connected ? (busy ? statusText : "Idle") : "Disconnected: reconnecting…";
+  if (busy && connected) t += ` · ${Math.round((Date.now() - busySince) / 1000)}s`;
+  $("#stext").textContent = t;
+}
+setInterval(() => busy && renderStatus(), 1000);
+function setBusy(b) {
+  if (b && !busy) busySince = Date.now();
+  busy = b;
+  sendBtn.classList.toggle("stop", b);
+  sendBtn.title = b ? "Stop" : "Send";
+  sendBtn.innerHTML = b ? '<svg width="12" height="12" viewBox="0 0 12 12"><rect width="12" height="12" rx="2" fill="currentColor"/></svg>'
+                        : '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  if (!b) { setStatus("Idle"); document.querySelectorAll(".plan li.active").forEach(li => li.classList.remove("active")); }
+  renderStatus();
+}
+
+// ---------- tool cards
+const ICON = { run_command: "$", read_file: "R", write_file: "W", edit_file: "E", list_files: "L", web_search: "?",
+               web_fetch: "↓", use_toolset: "+", remember: "M", forget: "M", save_preference: "M", ask_user: "?",
+               schedule_task: "⏰", list_schedules: "⏰", cancel_schedule: "⏰" };
+function argSummary(name, a) {
+  if (!a || typeof a !== "object") return "";
+  const v = a.command ?? a.path ?? a.url ?? a.query ?? a.question ?? a.request ?? a.task ?? a.program ?? a.keys ?? a.window ??
+            (a.ref !== undefined ? `[${a.ref}]` + (a.text ? ` "${a.text}"` : "") : undefined) ?? a.name ?? a.fact ?? a.text;
+  return v !== undefined ? String(v).split("\n")[0] : JSON.stringify(a).slice(0, 120);
+}
+function iconFor(name) {
+  if (ICON[name]) return ICON[name];
+  if (name.startsWith("browser_")) return "◉";
+  if (name.startsWith("desktop_")) return "▣";
+  if (name.includes("skill")) return "★";
+  if (name.includes("mcp") || name.includes("__")) return "⧉";
+  if (name === "self_improve") return "↻";
+  return "•";
+}
+function toolCall(ev) {
+  const d = el("details", "tool");
+  const s = el("summary");
+  s.appendChild(el("span", "ic", iconFor(ev.name)));
+  s.appendChild(el("span", "nm", ev.name));
+  s.appendChild(el("span", "arg", argSummary(ev.name, ev.args)));
+  const st = el("span", "st"); st.innerHTML = '<span class="spinner"></span>';
+  s.appendChild(st);
+  d.appendChild(s);
+  const body = el("div", "body");
+  body.appendChild(el("div", "lbl", "input"));
+  body.appendChild(el("div", "pre", JSON.stringify(ev.args, null, 2)));
+  d.appendChild(body);
+  tools.set((ev.child ? "c" : "") + ev.id, { d, st, body });
+  add(d, ev.child);
+  setStatus(`Running ${ev.name}`);
+}
+function toolResult(ev) {
+  const t = tools.get((ev.child ? "c" : "") + ev.id);
+  if (!t) return;
+  keepBottom(() => {
+    t.st.className = "st " + (ev.error ? "err" : "ok");
+    t.st.textContent = ev.error ? "error" : "done";
+    t.body.appendChild(el("div", "lbl", "output"));
+    t.body.appendChild(el("div", "pre", ev.output));
+    if (ev.error) t.d.open = false;
+  });
+  setStatus("Thinking…");
+}
+
+// ---------- plan
+function planning(ev) { planCard = null; stepCount = 0; setStatus(ev.child ? "Self-update: planning…" : "Planning…"); }
+function plan(ev) {
+  const c = el("div", "card plan");
+  const h = el("div", "card-h");
+  h.appendChild(el("span", "t", ev.child ? "Self-update plan" : "Plan"));
+  h.appendChild(el("span", "", `${ev.steps.length} step${ev.steps.length > 1 ? "s" : ""}`)).style.color = "var(--faint)";
+  c.appendChild(h);
+  const ol = el("ol");
+  ev.steps.forEach(s => { const li = el("li"); li.appendChild(el("span", "box")); const tx = el("span"); tx.appendChild(el("span", "", s)); li.appendChild(tx); ol.appendChild(li); });
+  c.appendChild(ol);
+  planCard = { c, ol, n: ev.steps.length };
+  stepCount = ev.steps.length;
+  add(c, ev.child);
+}
+function stepStart(ev) {
+  if (planCard) { const li = planCard.ol.children[ev.index - 1]; li && li.classList.add("active"); }
+  if (stepCount > 1) add(el("div", "step-div", `Step ${ev.index} of ${stepCount}`), ev.child);
+  setStatus(`Step ${ev.index}/${stepCount || 1} · thinking…`);
+}
+function stepDone(ev) {
+  if (!planCard) return;
+  const li = planCard.ol.children[ev.index - 1];
+  if (!li) return;
+  keepBottom(() => {
+    li.classList.remove("active"); li.classList.add(ev.finished ? "done" : "fail");
+    li.children[1].appendChild(el("span", "nt", ev.note));
+  });
+}
+
+// ---------- confirm
+function confirmCard(ev) {
+  const c = el("div", "card confirm");
+  const h = el("div", "card-h"); h.appendChild(el("span", "t", "Permission needed")); c.appendChild(h);
+  const b = el("div", "card-b");
+  b.appendChild(el("div", "txt", ev.text));
+  const acts = el("div", "acts");
+  const yes = el("button", "btn primary", "Allow"), no = el("button", "btn", "Deny");
+  yes.onclick = () => api("/api/confirm", { id: ev.id, allow: true });
+  no.onclick = () => api("/api/confirm", { id: ev.id, allow: false });
+  acts.append(yes);
+  if (ev.allow_key) {
+    const always = el("button", "btn", ev.always_label || "Always allow");
+    always.title = "Allow this kind of action without asking, until you close the app or clear it in the sidebar";
+    always.onclick = () => api("/api/confirm", { id: ev.id, allow: true, always: true });
+    acts.append(always);
+  }
+  acts.append(no); b.appendChild(acts); c.appendChild(b);
+  confirms.set(ev.id, { c, acts, b });
+  add(c);
+  setStatus("Waiting for your permission");
+  notify("omni-agent needs permission", ev.text);
+  yes.focus();
+}
+function confirmAnswer(ev) {
+  const x = confirms.get(ev.id);
+  if (!x) return;
+  x.c.classList.add("answered");
+  x.acts.remove();
+  x.b.appendChild(el("div", "decision " + (ev.allow ? "yes" : "no"),
+                     ev.always ? "✓ Always allowed this session" : ev.allow ? "✓ Allowed" : "✕ Denied"));
+  setStatus("Thinking…");
+}
+function questionCard(ev) {
+  const c = el("div", "card question");
+  const h = el("div", "card-h"); h.appendChild(el("span", "t", "omni asks")); c.appendChild(h);
+  const b = el("div", "card-b");
+  b.appendChild(el("div", "q", ev.text));
+  const row = el("div", "row");
+  const inp = el("input"); inp.placeholder = "Your answer…";
+  const go = el("button", "btn primary", "Answer"), skip = el("button", "btn", "Skip");
+  const send = () => api("/api/answer", { id: ev.id, text: inp.value });
+  go.onclick = send; skip.onclick = () => api("/api/answer", { id: ev.id, text: "" });
+  inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); send(); } };
+  row.append(inp, go, skip); b.appendChild(row); c.appendChild(b);
+  confirms.set("q" + ev.id, { c, row, b });
+  add(c);
+  setStatus("Waiting for your answer");
+  notify("omni-agent has a question", ev.text);
+  setTimeout(() => inp.focus(), 50);
+}
+function questionAnswer(ev) {
+  const x = confirms.get("q" + ev.id);
+  if (!x) return;
+  x.row.remove();
+  x.b.appendChild(el("div", "decision yes", ev.text ? "You: " + ev.text : "Skipped: it will use its best judgment"));
+  setStatus("Thinking…");
+}
+function notify(title, body) {
+  if (document.hidden && "Notification" in window && Notification.permission === "granted")
+    new Notification(title, { body: String(body).slice(0, 140) });
+}
+
+// ---------- what you asked for: requirements, checked against evidence at the end
+function requirements(ev) {
+  reqCard = null;
+  if (!ev.requirements || !ev.requirements.length) return;
+  const c = el("div", "card reqs");
+  const h = el("div", "card-h"); h.appendChild(el("span", "t", "What you asked for"));
+  const sub = el("span", "", "checked against real results at the end"); sub.style.color = "var(--faint)"; h.appendChild(sub);
+  c.appendChild(h);
+  if (ev.task) c.appendChild(el("div", "task", ev.task));
+  const ul = el("ul");
+  ev.requirements.forEach(r => { const li = el("li"); li.appendChild(el("span", "mk", "○")); const t = el("span"); t.appendChild(el("span", "", r)); li.appendChild(t); ul.appendChild(li); });
+  c.appendChild(ul);
+  reqCard = { c, ul };
+  add(c, ev.child);
+}
+function requirementsChecked(ev) {
+  if (!reqCard) return;
+  keepBottom(() => ev.results.forEach((r, i) => {
+    const li = reqCard.ul.children[i]; if (!li) return;
+    li.className = r.met ? "met" : "unmet";
+    li.children[0].textContent = r.met ? "✓" : "✕";
+    const t = li.children[1]; t.querySelector(".ev")?.remove();
+    if (r.evidence) t.appendChild(el("span", "ev", r.evidence));
+  }));
+}
+
+// ---------- results and messages
+function check(ev) {
+  const d = el("details", "tool");
+  const s = el("summary");
+  s.appendChild(el("span", "ic", "✓"));
+  s.appendChild(el("span", "nm", "check"));
+  s.appendChild(el("span", "arg", ev.command));
+  const st = el("span", "st " + (ev.passed ? "ok" : "err"), ev.passed ? "passed" : "failed");
+  s.appendChild(st); d.appendChild(s);
+  const body = el("div", "body"); body.appendChild(el("div", "pre", ev.output)); d.appendChild(body);
+  add(d, ev.child);
+}
+function result(ev) {
+  const c = el("div", "card result");
+  const h = el("div", "card-h");
+  h.appendChild(el("span", "t", ev.child ? "Self-update result" : "Done"));
+  const rq = ev.requirements || [], rqMet = rq.filter(r => r.met).length;
+  if (rq.length) h.appendChild(el("span", "badge " + (rqMet === rq.length ? "passed" : "failed"), `${rqMet}/${rq.length} REQUIREMENTS MET`));
+  if (ev.status !== "none" || !rq.length) {
+    const label = { passed: "TESTS PASSED", failed: "TESTS FAILED", none: "NOT VERIFIED" }[ev.status];
+    h.appendChild(el("span", "badge " + ev.status, label));
+  }
+  if (ev.command) h.appendChild(el("span", "", ev.command)).style.cssText = "font:12px var(--mono);color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+  c.appendChild(h);
+  const b = el("div", "card-b");
+  const ul = el("ul");
+  ev.steps.forEach((s, i) => { const li = el("li"); li.appendChild(document.createTextNode((ev.notes[i] || "") + " ")); ul.appendChild(li); });
+  b.appendChild(ul);
+  if (ev.status === "failed" && ev.output) b.appendChild(el("div", "pre", ev.output));
+  const reqs = ev.requirements || [];
+  if (reqs.length) {
+    const met = reqs.filter(r => r.met).length;
+    const line = el("div", "hint", `Requirements met: ${met} of ${reqs.length}` + (met < reqs.length ? ". Unmet ones are marked ✕ above." : "."));
+    line.style.color = met === reqs.length ? "var(--ok)" : "var(--warn)";
+    b.appendChild(line);
+  } else if (ev.status === "none") {
+    b.appendChild(el("div", "hint", "No tests were run: no files changed, or no test command was found."));
+  }
+  if (!ev.child) {
+    const fb = el("div", "feedback");
+    fb.appendChild(el("div", "lbl2", "Not how you wanted it? Tell omni, and it will do it that way from now on."));
+    const row = el("div", "row");
+    const inp = el("input"); inp.placeholder = "e.g. save reports in D:\\reports as Markdown, with today's date in the name";
+    const save = el("button", "btn", "Save for next time"), redo = el("button", "btn primary", "Redo with this");
+    const go = cmd => { if (!inp.value.trim() && cmd === "/feedback") return inp.focus(); sendText(`${cmd} ${inp.value.trim()}`.trim()); fb.remove(); };
+    save.onclick = () => go("/feedback"); redo.onclick = () => go("/redo");
+    inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); go("/redo"); } };
+    row.append(inp, save, redo); fb.appendChild(row); b.appendChild(fb);
+  }
+  c.appendChild(b);
+  add(c, ev.child);
+}
+function agentText(text, child) { const d = el("div", "msg-agent"); d.innerHTML = md(text); add(d, child); }
+function looksLikeDiff(t) { return /^(=====|--- |\+\+\+ |@@ )/m.test(t) && /^[+-]/m.test(t); }
+function logText(ev) {
+  const t = ev.text || "";
+  if (!t.trim()) return;
+  if (looksLikeDiff(t) || t.includes("=====")) {
+    const box = el("div", "diff");
+    t.split("\n").forEach(line => {
+      const cls = /^\+(?!\+\+)/.test(line) ? "a" : /^-(?!--)/.test(line) ? "d" : /^(@@|=====|-----|--- |\+\+\+ )/.test(line) ? "h" : "";
+      box.appendChild(el("div", cls, line || " "));
+    });
+    add(box, ev.child);
+  } else if (t.includes("\n")) add(el("div", "pre", t), ev.child);
+  else add(el("div", "note", t), ev.child);
+}
+
+// ---------- event dispatch
+function handle(ev) {
+  switch (ev.kind) {
+    case "user": {
+      const u = el("div", "msg-user");
+      if (ev.schedule) u.appendChild(el("div", "sched-tag", `⏰ Scheduled · ${ev.schedule.when}`));
+      u.appendChild(document.createTextNode(ev.text));
+      add(u); planCard = null; reqCard = null;
+      if (ev.schedule) notify("omni-agent started a scheduled task", ev.text);
+      break;
+    }
+    case "understanding": setStatus("Reading your request…"); break;
+    case "requirements": requirements(ev); break;
+    case "reviewing": setStatus("Checking each requirement against the results…"); break;
+    case "requirements_fix": add(el("div", "note warn", "Not done yet: " + ev.missing.join("; ") + ". Fixing…"), ev.child); break;
+    case "requirements_checked": requirementsChecked(ev); break;
+    case "question": questionCard(ev); break;
+    case "question_answer": questionAnswer(ev); break;
+    case "allow_list": case "schedules_changed": loadState(); break;
+    case "busy": setBusy(ev.busy); if (!ev.busy) loadState(); break;
+    case "planning": planning(ev); break;
+    case "plan": plan(ev); break;
+    case "step_start": stepStart(ev); break;
+    case "step_done": stepDone(ev); break;
+    case "thinking": if (!statusText.startsWith("Waiting")) setStatus(ev.child ? "Self-update: thinking…" : "Thinking…"); break;
+    case "tool_call": toolCall(ev); break;
+    case "tool_result": toolResult(ev); break;
+    case "confirm": confirmCard(ev); break;
+    case "confirm_answer": confirmAnswer(ev); break;
+    case "check": check(ev); break;
+    case "result": result(ev); break;
+    case "assistant": agentText(ev.text, ev.child); break;
+    case "command_result": { const d = el("div", "msg-agent"); d.appendChild(el("div", "pre", ev.text)); add(d); break; }
+    case "log": logText(ev); break;
+    case "error": add(el("div", "errbox", ev.text)); break;
+    case "stopped": add(el("div", "note warn", "Stopped.")); break;
+    case "self_update": add(el("div", "note", `Self-update started on branch ${ev.branch}. The child agent's work is indented below.`)); break;
+    case "restarting": add(el("div", "note warn", "Restarting to load the updated code…")); break;
+    case "settings": applySettings(ev); break;
+    case "state_changed": loadState(); break;
+    case "cleared": welcome(); tools.clear(); confirms.clear(); planCard = null; break;
+  }
+}
+
+function connect() {
+  const es = new EventSource(`/api/events?t=${encodeURIComponent(TOKEN)}&since=${lastSeq}`);
+  es.addEventListener("hello", e => {
+    const h = JSON.parse(e.data);
+    if (instance && h.instance !== instance) { lastSeq = 0; welcome(); add(el("div", "note", "Agent restarted with its updated code.")); }
+    instance = h.instance; connected = true; setBusy(h.busy); loadState();
+  });
+  es.onmessage = e => { const ev = JSON.parse(e.data); if (ev.seq <= lastSeq) return; lastSeq = ev.seq; handle(ev); };
+  es.onerror = () => { connected = false; renderStatus(); };
+}
+
+// ---------- sidebar
+function applySettings(s) {
+  $("#ws").value = s.workspace; $("#wsname").textContent = s.workspace;
+  document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.mode === s.mode));
+  $("#modehint").textContent = MODE_HINT[s.mode] || "";
+  $("#plan").classList.toggle("on", !!s.plan);
+  $("#m-mode").textContent = s.mode; $("#m-plan").textContent = s.plan ? "on" : "off";
+  const sel = $("#model");
+  if (![...sel.options].some(o => o.value === s.model)) sel.appendChild(new Option(s.model, s.model));
+  sel.value = s.model;
+  $("#modelshort").textContent = s.model.split("/").pop().split(":")[0].slice(0, 16);
+}
+function list(id, countId, items, render, emptyText) {
+  const box = $(id); box.innerHTML = "";
+  $(countId).textContent = items.length || "";
+  if (!items.length) { box.appendChild(el("div", "empty", emptyText)); return; }
+  items.forEach(x => box.appendChild(render(x)));
+}
+async function loadState() {
+  const s = await api("/api/state");
+  if (s.status !== 200) return;
+  state = s;
+  const sel = $("#model"); sel.innerHTML = "";
+  (s.models.length ? s.models : [s.model]).forEach(m => sel.appendChild(new Option(m, m)));
+  applySettings(s);
+  list("#skills", "#skc", s.skills, k => {
+    const d = el("div", "item click");
+    d.title = "Click to use this skill";
+    const tx = el("div"); tx.appendChild(el("span", "nm", k.name)); tx.appendChild(el("span", "ds", k.description + (k.tools.length ? ` · ${k.tools.length} tool(s)` : "") + (k.error ? " · broken" : "")));
+    d.appendChild(tx);
+    d.onclick = () => { input.value = `Use the ${k.name} skill to `; autosize(); input.focus(); };
+    return d;
+  }, "None yet. Do a task, then /learn.");
+  list("#mcp", "#mcc", s.mcp, m => {
+    const d = el("div", "item");
+    d.appendChild(el("span", "led" + (m.ok ? "" : " bad")));
+    const tx = el("div"); tx.appendChild(el("span", "nm", m.name)); tx.appendChild(el("span", "ds", m.ok ? `${m.tools} tools` : m.error));
+    d.appendChild(tx); return d;
+  }, "None. Ask: \"add an MCP server for …\"");
+  list("#memory", "#mec", s.memory.slice(-12).reverse(), m => el("div", "item", m), "Nothing remembered yet.");
+  list("#schedules", "#scc", s.schedules || [], it => {
+    const d = el("div", "item" + (it.enabled ? "" : " paused"));
+    const tx = el("div");
+    tx.appendChild(el("span", "nm", it.task));
+    const when = it.running ? "running now" : it.enabled ? `${it.when} · next ${(it.next_run || "-").replace("T", " ")}` : `${it.when} · paused`;
+    tx.appendChild(el("span", "ds", when + (it.last_status ? ` · last: ${it.last_status}` : "")));
+    d.appendChild(tx);
+    const acts = el("div", "acts2");
+    const btn = (label, title, action) => { const b = el("button", "", label); b.title = title;
+      b.onclick = async () => { const r = await api("/api/schedule", { id: it.id, action }); if (r.status !== 200) add(el("div", "note warn", r.message)); loadState(); };
+      acts.appendChild(b); };
+    btn("▶", "Run now", "run");
+    btn(it.enabled ? "❚❚" : "↻", it.enabled ? "Pause" : "Resume", it.enabled ? "pause" : "resume");
+    btn("✕", "Delete", "delete");
+    d.appendChild(acts);
+    return d;
+  }, "None. Say e.g. \"every weekday at 9:00 …\". Runs while the app is open.");
+  list("#prefs", "#prc", (s.preferences || []).slice(-12).reverse(), p => el("div", "item", p),
+       "None yet. Use the feedback box under a result.");
+  list("#allowed", "#alc", s.allowed || [], a => {
+    const d = el("div", "item"); d.appendChild(el("span", "", a.label.replace("Always allow ", "")));
+    return d;
+  }, "Nothing. Use \"Always allow\" on a permission card.");
+  if ((s.allowed || []).length) {
+    const clr = el("button", "small-btn", "Clear: ask again"); clr.style.margin = "4px 8px";
+    clr.onclick = async () => { await api("/api/allowed", {}); loadState(); };
+    $("#allowed").appendChild(clr);
+  }
+}
+async function settings(body) {
+  const r = await api("/api/settings", body);
+  if (r.status !== 200) add(el("div", "note warn", r.message || "Couldn't change that now."));
+}
+document.querySelectorAll("#mode button").forEach(b => b.onclick = () => settings({ mode: b.dataset.mode }));
+$("#plan").onclick = () => settings({ plan: !$("#plan").classList.contains("on") });
+$("#model").onchange = e => settings({ model: e.target.value });
+$("#wsset").onclick = () => settings({ workspace: $("#ws").value });
+$("#ws").onkeydown = e => { if (e.key === "Enter") settings({ workspace: $("#ws").value }); };
+$("#newchat").onclick = async () => { const r = await api("/api/new", {}); if (r.status !== 200) add(el("div", "note warn", "Stop the running task first.")); };
+$("#menu").onclick = () => document.body.classList.toggle("side-open");
+$("#theme").onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  const next = cur === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("omni-theme", next); } catch (e) {}
+};
+try { const t = localStorage.getItem("omni-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+// ---------- composer
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 220) + "px"; renderSlash(); }
+function slashMatches() {
+  const v = input.value;
+  if (!v.startsWith("/") || v.includes(" ") || !state) return [];
+  return Object.entries(state.commands).filter(([k]) => k.startsWith(v));
+}
+function renderSlash() {
+  const box = $("#slash"), m = slashMatches();
+  box.innerHTML = "";
+  box.style.display = m.length ? "block" : "none";
+  slashSel = Math.min(slashSel, Math.max(m.length - 1, 0));
+  m.forEach(([k, v], i) => {
+    const d = el("div", i === slashSel ? "sel" : "");
+    d.appendChild(el("b", "", k)); d.appendChild(el("span", "", v));
+    d.onmousedown = e => { e.preventDefault(); pickSlash(k); };
+    box.appendChild(d);
+  });
+}
+function pickSlash(k) {
+  const needsArg = ["/improve", "/learn", "/feedback", "/redo"].includes(k);
+  input.value = k + (needsArg ? " " : "");
+  autosize();
+  if (!needsArg) send();
+}
+async function send() {
+  if (busy) { await api("/api/stop", {}); setStatus("Stopping…"); return; }
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = ""; autosize();
+  if (!(await sendText(text))) { input.value = text; autosize(); }
+}
+async function sendText(text) {
+  const r = await api("/api/send", { text });
+  if (r.status !== 200) { add(el("div", "note warn", r.message || "Couldn't send.")); return false; }
+  return true;
+}
+input.addEventListener("input", () => { slashSel = 0; autosize(); });
+input.addEventListener("keydown", e => {
+  const m = slashMatches();
+  if (m.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault(); slashSel = (slashSel + (e.key === "ArrowDown" ? 1 : m.length - 1)) % m.length; renderSlash(); return;
+  }
+  if (m.length && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) { e.preventDefault(); pickSlash(m[slashSel][0]); return; }
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  if (e.key === "Escape" && busy) api("/api/stop", {});
+});
+sendBtn.onclick = send;
+document.addEventListener("click", () => { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); }, { once: true });
+
+welcome();
+connect();
+input.focus();
+</script>
+</body>
+</html>
