@@ -53,13 +53,21 @@ def build_config(argv=None) -> tuple[Config, list[str]]:
     ap.add_argument("--searxng", default=os.environ.get("OMNI_SEARXNG_URL"), help="local SearXNG URL for web_search")
     ap.add_argument("--mcp-config", default=None, help="MCP config file (default .omni/mcp.json)")
     ap.add_argument("--no-self-update", action="store_true", help="remove the self_improve tool")
+    ap.add_argument("--coder-model", default=os.environ.get("OMNI_CODER_MODEL"),
+                    help="model used when the agent changes its own code (default: --model). qwen3.5:9b codes better")
+    ap.add_argument("--coder-think", choices=["on", "off"], default=os.environ.get("OMNI_CODER_THINK"),
+                    help="thinking for the coder model (slower, often better code)")
+    ap.add_argument("--self-attempts", type=int, default=2, help="fresh tries a self-update gets")
+    ap.add_argument("--self-fix-rounds", type=int, default=3, help="fix rounds per self-update attempt")
     a = ap.parse_args(argv)
     cfg = Config(workspace=a.workspace, rules=a.rules, mode=a.mode, model=a.model, host=a.host, num_ctx=a.num_ctx,
                  temperature=a.temperature, think=a.think, shell=a.shell, allow_outside=a.allow_outside,
                  use_plan=not a.no_plan, verify=a.verify, fix_attempts=a.fix_attempts, web=not a.no_web,
                  browser_headless=a.headless, vision_model=a.vision_model, searxng_url=a.searxng,
                  mcp_config=a.mcp_config, enable_self_update=not a.no_self_update,
-                 extra={"trust_desktop": a.trust_desktop})
+                 coder_model=a.coder_model, coder_think=a.coder_think,
+                 extra={"trust_desktop": a.trust_desktop, "self_attempts": a.self_attempts,
+                        "self_fix_rounds": a.self_fix_rounds})
     return cfg, a.task
 
 

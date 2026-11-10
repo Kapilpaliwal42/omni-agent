@@ -184,13 +184,50 @@ framing, which real MCP servers don't speak.
 `/improve add a tool that reads PDF text` (or asking the agent to change itself) runs this:
 
 1. A git worktree of this repo is created on branch `self/<timestamp>` under `.omni/selfupdate/`.
-2. A child agent with only the core tools makes the change there. The running copy isn't touched.
-3. The harness runs `tests/` in the worktree, and the change is discarded if they fail.
-4. You see the full diff (also saved as `.omni/selfupdate/<id>.diff`) and approve or decline it.
-5. If you approve, it's committed as `self-update: ...`, merged, and the agent restarts on the new code.
+2. A child agent makes the change there, and the running copy isn't touched. It gets:
+   - the code tools (`search_code`, `outline`, `read_symbol`, `replace_symbol`, `add_code`)
+   - a context pack: the functions most related to the request (nested tool functions come with the line
+     that registers them), an outline of every file, and recipes for the usual changes (a tool, a slash
+     command, a setting, a test)
+   - a work order: find the code, write a test, make the change, run the tests
+3. **Quality gates.** Each failure goes back to the child for a focused fix round, with the functions
+   from any traceback included (`--self-fix-rounds`, default 3):
+   - every changed Python file compiles, and every agent module imports
+   - the test suite passes
+   - a code change comes with a test in `tests/` that **fails on the old code**. That proves the test
+     checks the change, not just that something exists.
+   - no placeholders or stubs (TODO, "implement later", NotImplementedError, `...`) in the added code
+   - a model review of the diff against the request: is all of it done, and is nothing faked?
+4. If an attempt still fails, a **fresh attempt** starts from a clean worktree, with notes on what went
+   wrong (`--self-attempts`, default 2). If every attempt fails, nothing is applied, and you get the
+   reasons.
+5. You see the full diff and the gate results (also saved as `.omni/selfupdate/<id>.diff`) and approve
+   or decline it.
+6. If you approve, it's committed as `self-update: ...`, merged, and the agent restarts on the new code.
 
 The repo must have no uncommitted changes to tracked files first, so every self-update stays one
 revertible commit.
+
+The agent can't edit its own source with ordinary file tools. In any workspace, writes into
+`omni/`, `agent.py`, `rules.md`, `tests/` or `skills/` of the running agent are refused and redirected
+to `self_improve` or `create_skill`. Its `.omni/` state folder is still writable.
+
+**A better coding model helps most.** `--coder-model qwen3.5:9b` (or `OMNI_CODER_MODEL`) uses a
+different model only for self-update coding, and `--coder-think on` turns on its thinking (slower,
+often better code). The default is the main model.
+
+### Benchmark
+
+`bench/selfupdate_bench.py` runs four realistic self-update requests: add a tool, add a slash command,
+make `web_fetch` refuse local addresses, and fix an injected bug. Each one runs in a throwaway clone,
+and a hidden test the agent never sees decides whether it really worked.
+
+```powershell
+.venv\Scripts\python bench\selfupdate_bench.py --label mine --working-tree
+```
+
+`--dry` checks that every hidden test fails before any change. `--only word_count` runs one task, and
+`--extra '{"cfg": {"coder_model": "qwen3.5:9b"}}'` tries another model.
 
 ## Tests
 
@@ -198,10 +235,17 @@ revertible commit.
 .venv\Scripts\python -m unittest discover -s tests -t . -v
 ```
 
-52 offline tests use a scripted fake model. They cover the loop, the confirmation levels, toolset
-routing, memory, skill install, approval and rejection, a real MCP round trip against a fake stdio
-server, desktop key translation, browser guards, and self-update approve, decline, broken-tests and
-rollback paths in a temp repo. They need no Ollama, network, browser or desktop.
+74 offline tests use a scripted fake model. They cover:
+
+- the agent loop, the confirmation levels and toolset routing
+- memory, and skill install, approval and rejection
+- a real MCP round trip against a fake stdio server
+- desktop key translation and browser guards
+- the code tools and the safer edits
+- the own-source guard
+- every self-update gate, the second attempt, and rollback, in a temp repo
+
+They need no Ollama, network, browser or desktop.
 
 ## Limits to expect
 
@@ -218,7 +262,8 @@ agent.py            CLI and slash commands
 rules.md            your system prompt
 omni/core.py        agent loop, planner, checks, confirmations
 omni/registry.py    tools and toolsets
-omni/builtin.py     shell, files, web
+omni/builtin.py     shell, files, web; edit safety and the own-source guard
+omni/code.py        code navigation and symbol edits; symbol-aware prompt context
 omni/memory.py      facts, and preferences learned from feedback
 omni/schedule.py    scheduled and recurring tasks
 omni/skills.py      learned skills

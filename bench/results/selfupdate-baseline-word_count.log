@@ -1,0 +1,38 @@
+
+[self-update] working in C:\Users\KAPILP~1\AppData\Local\Temp\omni-bench-word_count-3fhxzot3\state\selfupdate\20261110-214152 on branch self/20261110-214152
+   |   > read_file {"path": "omni/builtin.py"}
+   |   > edit_file {"path": "omni/builtin.py", "old_string": "    def read_file(path: str, offset: int = 1, limit: int = 400):\n        lines = read_text_any(agent.resolve(path)).splitlines()\n        start = max(int(of
+   |   > edit_file {"path": "omni/builtin.py", "old_string": "    reg.add(Tool(\"read_file\", \"Read a text file. Optional 1-based line offset and line limit.\",\n                  {\"path\": {\"type\": \"string\"}, \"o
+   |   > read_file {"path": "omni/builtin.py", "offset": 85, "limit": 20}
+   |   > edit_file {"path": "omni/builtin.py", "old_string": "    reg.add(Tool(\"read_file\", \"Read a text file. Optional 1-based line offset and line limit.\",\n                  {\"path\": {\"type\": \"string\"}, \"o
+   |   > read_file {"path": "omni/builtin.py", "limit": 30, "offset": 96}
+   |   > edit_file {"path": "omni/builtin.py", "old_string": "    reg.add(Tool(\"read_file\", \"Read a text file. Optional 1-based line offset and line limit.\",\n                  {\"path\": {\"type\": \"string\"}, \"o
+   |   > read_file {"path": "omni/builtin.py", "limit": 15, "offset": 93}
+   |   > edit_file {"path": "omni/builtin.py", "old_string": "                  [\"path\"], read_file, \"core\"))\n    reg.add(Tool(\"write_file\", \"Create or fully overwrite a file. Prefer edit_file for small changes.
+   |   > read_file {"path": "omni/builtin.py", "limit": 15, "offset": 98}
+   | [model returned an empty reply]
+
+===== Proposed change to the agent itself =====
+diff --git a/omni/builtin.py b/omni/builtin.py
+index 4168813..e387d3b 100644
+--- a/omni/builtin.py
++++ b/omni/builtin.py
+@@ -47,6 +47,11 @@ def register(agent):
+         more = f"\n[{len(lines) - start - len(chunk)} more lines; use offset]" if start + len(chunk) < len(lines) else ""
+         return body + more, False
+ 
++    def word_count(path: str):
++        text = read_text_any(agent.resolve(path))
++        words = len(text.split())
++        return f"words: {words}", False
++
+     def write_file(path: str, content: str):
+         f = agent.resolve(path)
+         f.parent.mkdir(parents=True, exist_ok=True)
+
+omni/builtin.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+Test suite: PASSED
+(diff saved to C:\Users\KAPILP~1\AppData\Local\Temp\omni-bench-word_count-3fhxzot3\state\selfupdate\20261110-214152.diff)
+[bench] confirm -> yes | Apply this change to the agent's own code?
+BENCH_RESULT {"out": "Applied self-update 103794a. The agent restarts after this task to load the new code. Undo with /rollback.", "err": false, "secs": 253}

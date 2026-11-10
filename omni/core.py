@@ -22,7 +22,7 @@ MAX_LOOP_STEPS = 40
 MAX_STEP_LOOP = 15
 MAX_FAILED_IN_ROW = 5
 MAX_SAME_CALL = 3
-CHANGE_TOOLS = {"write_file", "edit_file"}
+CHANGE_TOOLS = {"write_file", "edit_file", "replace_symbol", "add_code"}
 
 
 class OllamaError(RuntimeError):
@@ -54,6 +54,8 @@ class Config:
     searxng_url: str | None = None
     mcp_config: str | None = None
     enable_self_update: bool = True
+    coder_model: str | None = None           # model for self-update coding (default: model)
+    coder_think: str | None = None           # "on" / "off" thinking for that model (default: think)
     extra: dict = field(default_factory=dict)
 
 
@@ -168,9 +170,9 @@ class Agent:
         (STATE / "logs").mkdir(exist_ok=True)
         self.log_path = STATE / "logs" / f"{dt.datetime.now():%Y%m%d-%H%M%S}.jsonl"
 
-        from . import builtin, browser, desktop, mcp, memory, schedule, selfupdate, skills
-        for mod in modules if modules is not None else (builtin, memory, skills, mcp, browser, desktop, schedule,
-                                                         selfupdate):
+        from . import browser, builtin, code, desktop, mcp, memory, schedule, selfupdate, skills
+        for mod in modules if modules is not None else (builtin, code, memory, skills, mcp, browser, desktop,
+                                                         schedule, selfupdate):
             (mod.register if hasattr(mod, "register") else mod)(self)   # a module or a register function
 
     # ---------------------------------------------------- helpers
@@ -446,13 +448,37 @@ Tools:
     def file_context(self, text: str, limit: int = 3, max_chars: int = 4000) -> str:
         exts = {".py", ".js", ".ts", ".tsx", ".json", ".md", ".txt", ".toml", ".yaml", ".yml", ".html", ".css",
                 ".sh", ".ps1", ".cfg", ".ini", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".csv"}
+        from .code import find_symbol, outline_text, py_symbols, symbol_source, traceback_context
         parts = []
+        idents = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", text))
         for p in self.workspace_files():
-            if p.suffix in exts and p.name in text and p.stat().st_size <= max_chars * 3:
+            rel = p.relative_to(self.workspace).as_posix()
+            if p.suffix not in exts or (p.name not in text and rel not in text):
+                continue
+            size = p.stat().st_size
+            if size <= max_chars * 3:
                 body = clip(redact(p.read_text(encoding="utf-8", errors="replace")), max_chars)
-                parts.append(f"--- {p.relative_to(self.workspace)} ---\n{body}")
-                if len(parts) >= limit:
-                    break
+                parts.append(f"--- {rel} ---\n{body}")
+            elif p.suffix == ".py" and size < 400_000:
+                # Too big to paste whole: its outline, plus the functions this text mentions by name.
+                src = p.read_text(encoding="utf-8", errors="replace")
+                block = [f"--- {rel} (large file: outline, then the functions mentioned) ---",
+                         clip(outline_text(p, rel), 1800)]
+                try:
+                    syms, lines, shown = py_symbols(src), src.splitlines(), 0
+                    for name in sorted(idents, key=len, reverse=True):
+                        for s in find_symbol(syms, name)[:1]:
+                            if s.end - s.start < 200 and shown < 3:
+                                block.append(f"{s.kind} {s.qualname}:\n" + clip(redact(symbol_source(lines, s)), 2500))
+                                shown += 1
+                except SyntaxError:
+                    pass
+                parts.append("\n".join(block))
+            if len(parts) >= limit:
+                break
+        if 'File "' in text and "line " in text:
+            if tb := traceback_context(text, self.workspace):
+                parts.append(tb)
         return ("\n\nCurrent contents of the files involved:\n" + "\n\n".join(parts)) if parts else ""
 
     def file_overview(self, limit: int = 60) -> str:
@@ -595,6 +621,8 @@ Tools:
             ans = self.ask_user(u["question"])
             if ans:
                 u = self.understand(f"{task}\n(Asked: {u['question']} The user answered: {ans})") | {"question": ""}
+        if self.cfg.extra.get("force_task"):
+            u["kind"] = "task"
         self.route_toolsets(task + " " + u["task"])
         if u["kind"] == "answer":
             return self.answer(task)

@@ -46,6 +46,7 @@ class Script:
     def __init__(self, *replies, routes=None, reviews=None, rules=None):
         self.replies, self.payloads = list(replies), []
         self.routes, self.reviews, self.rules = list(routes or []), list(reviews or []), list(rules or [])
+        self.code_reviews: list[dict] = []
 
     def __call__(self, payload):
         self.payloads.append(payload)
@@ -57,6 +58,9 @@ class Script:
             return reply(json.dumps(self.reviews.pop(0) if self.reviews else {"results": []}))
         if "rule" in props:
             return reply(json.dumps({"rule": self.rules.pop(0) if self.rules else ""}))
+        if "complete" in props:                     # self-update's review of a diff
+            r = self.code_reviews.pop(0) if self.code_reviews else {"complete": True, "problems": []}
+            return reply(json.dumps(r))
         if not self.replies:
             return reply("done")
         r = self.replies.pop(0)
@@ -596,40 +600,115 @@ class TestSelfUpdate(Base):
         git(self.root, "worktree", "prune")
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def child_script(self, new_value):
-        return Script(reply(json.dumps({"steps": ["Change VALUE in omni/feature.py to the new number"]})),
-                      call("edit_file", path="omni/feature.py", old_string="VALUE = 1", new_string=f"VALUE = {new_value}"),
-                      reply("changed VALUE"))
+    VALUE_TEST = ("import unittest\nfrom omni import feature\n"
+                  "class TV(unittest.TestCase):\n    def test(self): self.assertEqual(feature.VALUE, {v})\n")
+
+    def child_script(self, new_value, with_test=True, extra=()):
+        steps = [reply(json.dumps({"steps": ["Change VALUE in omni/feature.py and add a test"]})),
+                 call("edit_file", path="omni/feature.py", old_string="VALUE = 1", new_string=f"VALUE = {new_value}")]
+        if with_test:
+            steps.append(call("write_file", path="tests/test_value.py", content=self.VALUE_TEST.format(v=new_value)))
+        return Script(*steps, reply("changed VALUE"), *extra)
+
+    def improve(self, script, request="set VALUE to 2", attempts=1, rounds=1):
+        a = self.agent(script, extra={"self_root": str(self.root), "self_attempts": attempts, "self_fix_rounds": rounds})
+        return a, a.self_improve(request)
 
     def test_approved_change_is_merged_and_revertible(self):
-        a = self.agent(self.child_script(2), extra={"self_root": str(self.root)})
         self.answers = ["y"]
-        out, err = a.self_improve("set VALUE to 2")
+        a, (out, err) = self.improve(self.child_script(2))
         self.assertFalse(err, out)
         self.assertIn("VALUE = 2", (self.root / "omni" / "feature.py").read_text())
+        self.assertTrue((self.root / "tests" / "test_value.py").exists())
+        self.assertIn("new test fails on the old code", out)
         self.assertTrue(a.restart_requested)
         self.assertIn("self-update: set VALUE to 2", git(self.root, "log", "--format=%s").stdout)
-        self.assertNotIn("self/", git(self.root, "branch").stdout)       # temp branch cleaned up
+        self.assertNotIn("self/", git(self.root, "branch").stdout)       # temp branches cleaned up
         self.answers = ["y"]
         self.assertIn("Reverted", selfupdate.rollback(a, self.root))
         self.assertIn("VALUE = 1", (self.root / "omni" / "feature.py").read_text())
 
     def test_declined_change_leaves_repo_untouched(self):
-        a = self.agent(self.child_script(2), extra={"self_root": str(self.root)})
         self.answers = ["n"]
-        out, err = a.self_improve("set VALUE to 2")
+        a, (out, err) = self.improve(self.child_script(2))
         self.assertTrue(err)
         self.assertIn("VALUE = 1", (self.root / "omni" / "feature.py").read_text())
         self.assertEqual(git(self.root, "log", "--format=%s").stdout.strip(), "init")
 
     def test_change_that_breaks_tests_is_discarded(self):
-        s = self.child_script(3)
-        s.replies += [reply("could not fix")] * 10                      # fix attempts do nothing
-        a = self.agent(s, extra={"self_root": str(self.root)})
-        out, err = a.self_improve("set VALUE to 3")
+        s = self.child_script(3, with_test=False, extra=[reply("could not fix")] * 20)
+        (self.root / "tests" / "test_feature.py").write_text(
+            "import unittest\nfrom omni import feature\n"
+            "class T(unittest.TestCase):\n    def test(self): self.assertIn(feature.VALUE, (1, 2))\n")
+        a, (out, err) = self.improve(s, "set VALUE to 3")
         self.assertTrue(err)
-        self.assertIn("FAILS", out)
+        self.assertIn("test suite fails", out)
         self.assertIn("VALUE = 1", (self.root / "omni" / "feature.py").read_text())
+        self.assertNotIn("self/", git(self.root, "branch").stdout)
+
+    def test_missing_test_triggers_a_fix_round(self):
+        s = self.child_script(2, with_test=False, extra=[
+            call("write_file", path="tests/test_value.py", content=self.VALUE_TEST.format(v=2)), reply("added test")])
+        self.answers = ["y"]
+        a, (out, err) = self.improve(s)
+        self.assertFalse(err, out)
+        fix = next(p for p in s.payloads if "not ready yet" in p["messages"][-1]["content"])
+        self.assertIn("no test in tests/", fix["messages"][-1]["content"])
+
+    def test_test_that_passes_on_old_code_is_rejected(self):
+        weak = "import unittest\nclass TW(unittest.TestCase):\n    def test(self): self.assertTrue(True)\n"
+        s = Script(reply(json.dumps({"steps": ["Change VALUE"]})),
+                   call("edit_file", path="omni/feature.py", old_string="VALUE = 1", new_string="VALUE = 2"),
+                   call("write_file", path="tests/test_weak.py", content=weak), reply("done"),
+                   *[reply("cannot")] * 20)
+        a, (out, err) = self.improve(s)
+        self.assertTrue(err)
+        self.assertIn("pass on the OLD code", out)
+
+    def test_placeholders_are_rejected(self):
+        s = Script(reply(json.dumps({"steps": ["Add helper"]})),
+                   call("edit_file", path="omni/feature.py", old_string="VALUE = 1",
+                        new_string="VALUE = 2\n\ndef helper():\n    # TODO: implement later\n    return None"),
+                   call("write_file", path="tests/test_value.py", content=self.VALUE_TEST.format(v=2)),
+                   reply("done"), *[reply("cannot")] * 20)
+        a, (out, err) = self.improve(s)
+        self.assertTrue(err)
+        self.assertIn("placeholders", out)
+
+    def test_review_problem_gets_a_fix_round(self):
+        s = self.child_script(2, extra=[call("read_file", path="omni/feature.py"), reply("checked")])
+        s.code_reviews = [{"complete": False, "problems": ["VALUE is not documented"]}]
+        self.answers = ["y"]
+        a, (out, err) = self.improve(s)
+        self.assertFalse(err, out)
+        fix = next(p for p in s.payloads if "not ready yet" in p["messages"][-1]["content"])
+        self.assertIn("VALUE is not documented", fix["messages"][-1]["content"])
+
+    def test_second_attempt_gets_notes_from_the_first(self):
+        weak = "import unittest\nclass TW(unittest.TestCase):\n    def test(self): self.assertTrue(True)\n"
+        first = [reply(json.dumps({"steps": ["Change VALUE"]})),
+                 call("edit_file", path="omni/feature.py", old_string="VALUE = 1", new_string="VALUE = 2"),
+                 call("write_file", path="tests/test_weak.py", content=weak), reply("done"), reply("can't fix")]
+        second = [reply(json.dumps({"steps": ["Change VALUE and test it"]})),
+                  call("edit_file", path="omni/feature.py", old_string="VALUE = 1", new_string="VALUE = 2"),
+                  call("write_file", path="tests/test_value.py", content=self.VALUE_TEST.format(v=2)), reply("done")]
+        s = Script(*first, *second)
+        self.answers = ["y"]
+        a, (out, err) = self.improve(s, attempts=2, rounds=0)
+        self.assertFalse(err, out)
+        task2 = [p for p in s.payloads if "kind" in (p.get("format") or {}).get("properties", {})][1]
+        self.assertIn("An earlier attempt failed", task2["messages"][-1]["content"])
+        self.assertIn("OLD code", task2["messages"][-1]["content"])
+
+    def test_child_gets_code_tools_and_context(self):
+        s = self.child_script(2)
+        self.answers = ["y"]
+        self.improve(s)
+        step = next(p for p in s.payloads if "Now do ONLY step 1" in p["messages"][-1]["content"])
+        names = {t["function"]["name"] for t in step["tools"]}
+        self.assertTrue({"search_code", "read_symbol", "replace_symbol", "add_code"} <= names)
+        self.assertIn("How to make the usual changes", step["messages"][0]["content"])
+        self.assertIn("omni/feature.py", step["messages"][0]["content"])
 
     def test_dirty_repo_refused(self):
         (self.root / "omni" / "feature.py").write_text("VALUE = 9\n")
