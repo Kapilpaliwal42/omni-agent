@@ -13,6 +13,9 @@ Protocol:
     POST /api/answer   {id, text}            answer a question the agent asked
     POST /api/schedule {id, action}          pause | resume | run | delete a scheduled task
     POST /api/allowed                        clear the "always allow" list
+    GET  /api/browser/frame[?fresh=1]        latest picture of the agent's browser (JPEG)
+    POST /api/browser/input {action, ...}    your click/type/key/scroll/navigate/back/reload in the panel
+    POST /api/browser/mode  {mode, start}    "agent" (own profile) or "attach" (your Edge); start=true opens one
     POST /api/stop               stop the running task (pending confirmations are denied)
     POST /api/settings {mode, model, plan, workspace}
     POST /api/new                new conversation
@@ -49,7 +52,8 @@ class Hub:
 
     def push(self, kind: str, **data):
         with self.cond:
-            ev = {"seq": len(self.events) + 1, "kind": kind, "ts": time.time(), **data}
+            # data first, so an event's own fields can never overwrite its position or kind in the stream
+            ev = {**data, "seq": len(self.events) + 1, "kind": kind, "ts": time.time()}
             self.events.append(json.loads(redact(json.dumps(ev, ensure_ascii=False, default=str))))
             self.cond.notify_all()
 
@@ -85,6 +89,8 @@ class Session:
         self._models: tuple[float, list[str]] = (0.0, [])
         self.on_restart = None
         self.running_schedule: str | None = None
+        if b := getattr(self.agent, "browser", None):       # the app's browser panel follows every new picture
+            b.on_frame.append(lambda seq, info: self.hub.push("browser_update", frame=seq, **info))
         if scheduler and hasattr(self.agent, "schedules"):
             threading.Thread(target=self._scheduler, daemon=True).start()
 
@@ -239,12 +245,69 @@ class Session:
                                                    "last_status")} | {"running": it["id"] == self.running_schedule}
                           for it in sched],
             "allowed": [{"key": k, "label": self.always_label(k)} for k in sorted(a.session_allow)],
+            "browser": self.browser_state(),
             "has_last_task": bool(getattr(a, "last_task", None)),
             "toolsets": [{"name": t.name, "description": t.description} for t in a.registry.toolsets.values()
                          if not t.name.startswith(("skill:", "mcp:"))],
             "commands": COMMANDS, "self_update": hasattr(a, "self_improve"),
             "pending": [{"id": k, "kind": v["kind"]} for k, v in self.pending.items()],
         }
+
+    # ---- the shared browser panel
+    PAGE_TOOLS = ("browser_open", "browser_click", "browser_type", "browser_set_value", "browser_select",
+                  "browser_press")
+
+    def browser_state(self) -> dict | None:
+        b = getattr(self.agent, "browser", None)
+        if not b:
+            return None
+        return {"mode": b.mode, "cdp_url": b.cdp_url, "started": b.started, "seq": b.frame_seq, **b.frame_info}
+
+    def browser_input(self, data: dict) -> tuple[bool, str, int]:
+        b = getattr(self.agent, "browser", None)
+        if not b:
+            return False, "The browser toolset is off.", 0
+        action = str(data.get("action", ""))
+        if not b.started and action != "navigate":
+            return False, "No page open yet. Type an address in the panel's address bar.", 0
+        args = {k: data[k] for k in ("x", "y", "text", "key", "dy", "url") if k in data}
+        try:
+            return True, "ok", b.user_input(action, **args)
+        except Exception as e:                    # never echo what was typed: it may be a password
+            return False, f"{type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}", b.frame_seq
+
+    def browser_mode(self, mode: str, cdp_url: str | None = None, start: bool = False) -> tuple[bool, str]:
+        from .browser import start_shared_edge
+        b = getattr(self.agent, "browser", None)
+        if not b:
+            return False, "The browser toolset is off."
+        if self.busy:
+            return False, "Wait for the current task to finish (or press Stop) before switching browsers."
+        if mode not in ("agent", "attach"):
+            return False, "mode must be 'agent' or 'attach'."
+        msg = ""
+        if start:
+            try:
+                cdp_url = start_shared_edge(int((cdp_url or b.cdp_url).rsplit(":", 1)[-1].strip("/")))
+                msg = "Started a shared Edge window. "
+                time.sleep(2.5)
+            except Exception as e:
+                return False, f"Couldn't start Edge: {e}"
+        b.set_mode(mode, cdp_url)
+        for name in self.PAGE_TOOLS:          # in your own browser, page-changing actions ask in "ask" mode
+            if t := self.agent.registry.tools.get(name):
+                t.confirm = "edit" if mode == "attach" else "never"
+        self.hub.push("browser_mode", mode=mode, cdp_url=b.cdp_url)
+        if mode == "attach":
+            try:
+                b.ensure()
+                b.capture()
+                msg += f"Connected to the browser at {b.cdp_url}."
+            except Exception as e:
+                msg += str(e)
+        else:
+            msg += "Using the agent's own browser profile."
+        return True, msg
 
     def schedule_action(self, sid: str, action: str) -> tuple[bool, str]:
         s = getattr(self.agent, "schedules", None)
@@ -325,7 +388,18 @@ def make_handler(session: Session, token: str, port: int):
                 html = (WEB / "index.html").read_bytes().replace(b"__OMNI_TOKEN__", token.encode())
                 return self._send(200, html, "text/html; charset=utf-8",
                                   {"Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; "
-                                                              "script-src 'self' 'unsafe-inline'; img-src 'self' data:"})
+                                                              "script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"})
+            if path == "/api/browser/frame":
+                b = getattr(session.agent, "browser", None)
+                q = parse_qs(urlparse(self.path).query)
+                if b and b.started and q.get("fresh"):
+                    try:
+                        b.capture(quiet=True)
+                    except Exception:
+                        pass
+                if not b or not b.frame:
+                    return self._send(204, b"", "text/plain")
+                return self._send(200, b.frame, "image/jpeg", {"X-Frame-Seq": str(b.frame_seq)})
             if path == "/api/state":
                 return self._json(200, session.state())
             if path == "/api/events":
@@ -388,6 +462,14 @@ def make_handler(session: Session, token: str, port: int):
                 return self._json(200, {"ok": session.answer(int(data.get("id", 0)), text=str(data.get("text", "")))})
             if path == "/api/schedule":
                 ok, msg = session.schedule_action(str(data.get("id", "")), str(data.get("action", "")))
+                return self._json(200 if ok else 409, {"ok": ok, "message": msg})
+            if path == "/api/browser/input":
+                ok, msg, seq = session.browser_input(data)
+                return self._json(200 if ok else 409, {"ok": ok, "message": msg, "seq": seq,
+                                                       "browser": session.browser_state()})
+            if path == "/api/browser/mode":
+                ok, msg = session.browser_mode(str(data.get("mode", "")), data.get("cdp_url") or None,
+                                               bool(data.get("start")))
                 return self._json(200 if ok else 409, {"ok": ok, "message": msg})
             if path == "/api/allowed":
                 session.agent.session_allow.clear()

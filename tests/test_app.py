@@ -23,6 +23,33 @@ from tests.test_offline import Script, call, reply        # noqa: E402
 TOKEN = "test-token"
 
 
+class FakeBrowser:
+    """Stands in for omni.browser.Browser (no Playwright): records the panel's input."""
+
+    def __init__(self):
+        self.mode, self.cdp_url, self.started = "agent", "http://127.0.0.1:9222", False
+        self.frame, self.frame_seq, self.frame_info, self.on_frame, self.calls = None, 0, {}, [], []
+
+    def user_input(self, action, **a):
+        self.calls.append((action, a))
+        self.started = True
+        if action == "navigate":
+            self.frame_info = {"url": "https://example.com/", "title": "Example", "width": 1280, "height": 860}
+        return self.capture()
+
+    def capture(self, quiet=False):
+        self.frame, self.frame_seq = b"\xff\xd8jpeg", self.frame_seq + 1
+        for cb in self.on_frame:
+            cb(self.frame_seq, self.frame_info)
+        return self.frame_seq
+
+    def set_mode(self, mode, cdp_url=None):
+        self.mode, self.started = mode, False
+
+    def ensure(self):
+        self.started = True
+
+
 class AppTest(unittest.TestCase):
     def start(self, script, mode="ask"):
         self.ws = Path(tempfile.mkdtemp(prefix="omni-appws-"))
@@ -163,6 +190,43 @@ class AppTest(unittest.TestCase):
         self.assertGreater(dt.datetime.fromisoformat(saved["next_run"]), dt.datetime.now())
         self.assertTrue((self.ws / "tick.txt").exists())
         self.assertFalse(self.session.run_due())                        # not due again yet
+
+    def test_event_fields_cannot_overwrite_stream_position(self):
+        self.start(Script())
+        self.session.hub.push("log", text="a")
+        self.session.hub.push("browser_update", seq=1, ts=0, frame=7)
+        ev = self.session.hub.events[-1]
+        self.assertEqual((ev["seq"], ev["kind"], ev["frame"]), (2, "browser_update", 7))
+
+    def test_browser_panel_endpoints(self):
+        self.start(Script())
+        fake = FakeBrowser()
+        self.session.agent.browser = fake
+        fake.on_frame.append(lambda seq, info: self.session.hub.push("browser_update", frame=seq, **info))
+        self.assertEqual(self.req("/api/browser/input", {"action": "click", "x": 1, "y": 2})[0], 409)  # no page yet
+        code, r = self.req("/api/browser/input", {"action": "navigate", "url": "example.com"})
+        self.assertEqual(code, 200, r)
+        self.assertEqual(r["browser"]["url"], "https://example.com/")
+        code, r = self.req("/api/browser/input", {"action": "type", "text": "secret-password-123"})
+        self.assertEqual(code, 200)
+        self.assertEqual(fake.calls[-1], ("type", {"text": "secret-password-123"}))
+        self.assertNotIn("secret-password-123", json.dumps(self.session.hub.events))   # typing is never logged
+        upd = self.wait_for("browser_update")
+        self.assertEqual(upd["frame"], 1)
+        with urlopen(Request(self.base + f"/api/browser/frame?t={TOKEN}"), timeout=5) as resp:
+            self.assertEqual(resp.headers["Content-Type"], "image/jpeg")
+            self.assertEqual(resp.read(), b"\xff\xd8jpeg")
+        self.assertEqual(self.req("/api/state")[1]["browser"]["mode"], "agent")
+        code, r = self.req("/api/browser/mode", {"mode": "attach"})
+        self.assertEqual(code, 200, r)
+        self.assertEqual(fake.mode, "attach")
+        self.assertEqual(self.req("/api/browser/mode", {"mode": "bogus"})[0], 409)
+
+    def test_frame_endpoint_without_browser_page(self):
+        self.start(Script())
+        self.session.agent.browser = FakeBrowser()
+        with urlopen(Request(self.base + f"/api/browser/frame?t={TOKEN}"), timeout=5) as resp:
+            self.assertEqual(resp.status, 204)
 
     def test_event_stream_replays_from_start(self):
         self.start(Script())

@@ -53,6 +53,32 @@ server and print the link). The server listens on 127.0.0.1 only. Each launch ha
 token in the link, and requests with the wrong token or a non-localhost Host header are refused, so
 other websites in your browser can't drive the agent. Keep the console window open while you use the app.
 
+## Shared browser
+
+The **Browser** button at the top of the app opens a panel on the right that shows the agent's browser
+live. It opens by itself the first time the agent uses the browser. The panel has:
+
+- an address bar, back and reload buttons, and the current page, which updates after every agent
+  action and every few seconds while you watch
+- the page, ready for **you to use**. Click in it, type while it's focused (`Ctrl+L` jumps to the
+  address bar, paste works), and scroll with the wheel. Use it to sign in yourself when a site needs it
+  (the agent never types passwords), then tell the agent to carry on. What you type goes straight to
+  the page and is never written to the agent's logs or event stream.
+- a switch between two browsers:
+  - **Agent's**: its own Edge profile in `.omni/browser-profile`. Sign-ins you make there are kept. In
+    the app it runs hidden, because the panel is the window (`--browser-window` shows it as a normal
+    window as well).
+  - **My Edge**: the agent attaches to an Edge window you use yourself, and works in your tabs.
+    **Start shared Edge** opens that window. It has its own profile in `.omni/shared-edge`, because
+    recent Edge and Chrome versions refuse remote control of your default profile, so sign in to your
+    sites there once. You can also start Edge yourself with `--remote-debugging-port=9222` and pick My
+    Edge, or start the app with `--browser-mode attach`. When the agent closes or switches away, it only
+    disconnects; your Edge stays open. In this mode, page-changing actions ask first in `ask`
+    mode, and Buy, Pay, Send and Delete clicks ask in `auto` mode too.
+
+The agent also gets `browser_tabs` and `browser_switch_tab`, so it can work across the tabs you have
+open, and `browser_set_value` for read-only fields such as date pickers that refuse typing.
+
 ## Doing tasks the way you said
 
 Every message goes through these steps:
@@ -235,12 +261,12 @@ and a hidden test the agent never sees decides whether it really worked.
 .venv\Scripts\python -m unittest discover -s tests -t . -v
 ```
 
-74 offline tests use a scripted fake model. They cover:
+87 offline tests use a scripted fake model. They cover:
 
 - the agent loop, the confirmation levels and toolset routing
 - memory, and skill install, approval and rejection
 - a real MCP round trip against a fake stdio server
-- desktop key translation and browser guards
+- desktop key translation, browser guards, the browser thread and the shared-browser panel endpoints
 - the code tools and the safer edits
 - the own-source guard
 - every self-update gate, the second attempt, and rollback, in a temp repo
@@ -249,6 +275,12 @@ They need no Ollama, network, browser or desktop.
 
 ## Limits to expect
 
+- **Context window.** Everything the model sees in one step must fit in `--num-ctx` (default 16384
+  tokens). A web page snapshot is about 2,500 tokens, so before every model call the agent shrinks older
+  tool results to a short note and keeps the newest two whole. If the window still fills, it trims harder
+  and retries. A stop message says which limit was hit: the context window (start a new conversation
+  or split the task) or the 4,096-token reply limit (ask for less, or write long output to a file in
+  parts).
 - A 9B model on 6 GB VRAM handles short, specific browser and desktop tasks ("open X, find Y, copy it
   into Z"). Long open-ended ones drift. Give it one goal per task and name the site or app.
 - Desktop control works best on standard Windows apps (Notepad, Explorer, Settings, Office). Apps that

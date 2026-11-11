@@ -48,6 +48,9 @@ def build_config(argv=None) -> tuple[Config, list[str]]:
     ap.add_argument("--fix-attempts", type=int, default=2)
     ap.add_argument("--no-web", action="store_true", help="start with web tools off")
     ap.add_argument("--headless", action="store_true", help="run the browser without a window")
+    ap.add_argument("--browser-mode", choices=["agent", "attach"], default="agent",
+                    help="agent: its own Edge profile; attach: your Edge started with --remote-debugging-port")
+    ap.add_argument("--cdp-url", default="http://127.0.0.1:9222", help="where to attach in --browser-mode attach")
     ap.add_argument("--trust-desktop", action="store_true",
                     help="desktop clicks/typing run without asking in auto mode (risky-looking clicks still ask)")
     ap.add_argument("--searxng", default=os.environ.get("OMNI_SEARXNG_URL"), help="local SearXNG URL for web_search")
@@ -67,6 +70,7 @@ def build_config(argv=None) -> tuple[Config, list[str]]:
                  mcp_config=a.mcp_config, enable_self_update=not a.no_self_update,
                  coder_model=a.coder_model, coder_think=a.coder_think,
                  extra={"trust_desktop": a.trust_desktop, "self_attempts": a.self_attempts,
+               "browser_mode": a.browser_mode, "cdp_url": a.cdp_url,
                         "self_fix_rounds": a.self_fix_rounds})
     return cfg, a.task
 

@@ -135,6 +135,45 @@ class TestLoop(Base):
         res = a.run("write m.py")
         self.assertEqual(res["status"], "passed")
 
+    def big_files(self, n=5):
+        for i in range(n):
+            (self.ws / f"big{i}.txt").write_text(f"file {i}\n" + ("lorem ipsum dolor sit amet " * 400))
+
+    def test_old_tool_results_are_trimmed(self):
+        self.big_files()
+        s = Script(reply(json.dumps({"steps": ["Read the five big files"]})),
+                   *[call("read_file", path=f"big{i}.txt") for i in range(5)], reply("read them all"))
+        self.agent(s).run("read the big files")
+        last = s.payloads[-1]["messages"]
+        tools = [m["content"] for m in last if m["role"] == "tool"]
+        self.assertEqual(len(tools), 5)
+        self.assertTrue(all("[trimmed:" in t for t in tools[:3]), [t[:80] for t in tools])
+        self.assertTrue(all("[trimmed:" not in t for t in tools[3:]))         # the newest two stay whole
+        self.assertIn("file 0", tools[0])                                       # the start of each is kept
+
+    def test_context_overflow_trims_and_retries(self):
+        self.big_files(2)
+        full = {"message": {"role": "assistant", "content": "Let me"}, "done_reason": "length",
+                "eval_count": 10, "prompt_eval_count": 16300}
+        s = Script(reply(json.dumps({"steps": ["Read two files"]})),
+                   call("read_file", path="big0.txt"), call("read_file", path="big1.txt"), full, reply("done reading"))
+        res = self.agent(s).run("read files")
+        self.assertEqual(res["notes"], ["done reading"])                       # carried on instead of stopping
+        retry = s.payloads[-1]["messages"]
+        self.assertTrue(any("[trimmed:" in m["content"] for m in retry if m["role"] == "tool"))
+        self.assertFalse(any(m.get("content") == "Let me" for m in retry))      # the cut-off reply was dropped
+
+    def test_length_stop_says_why(self):
+        long_reply = {"message": {"role": "assistant", "content": "x" * 50}, "done_reason": "length",
+                      "eval_count": 4096, "prompt_eval_count": 3000}
+        s = Script(long_reply)
+        res = self.agent(s, use_plan=False).run("write a novel")
+        self.assertIn("output limit", res["text"] + str(self.printed))
+        a = self.agent(Script())
+        self.assertTrue(a.context_overflow({"done_reason": "length", "eval_count": 10, "prompt_eval_count": 100}))
+        self.assertFalse(a.context_overflow({"done_reason": "length", "eval_count": 4096, "prompt_eval_count": 3000}))
+        self.assertFalse(a.context_overflow({"done_reason": "stop", "eval_count": 5}))
+
     def test_unknown_and_repeated_calls(self):
         a = self.agent(Script())
         self.assertTrue(a.execute("nope", {})[1])
@@ -576,6 +615,21 @@ class TestBrowserGuard(Base):
         out, err = a.execute("browser_type", {"ref": 1, "text": "hunter2"})
         self.assertTrue(err)
         self.assertIn("password field", out)
+        out, err = a.execute("browser_set_value", {"ref": 1, "value": "hunter2"})
+        self.assertTrue(err)
+        self.assertIn("password field", out)
+
+    def test_read_only_field_points_to_set_value(self):
+        from omni import browser
+        a = self.agent(Script(), modules=[builtin, browser])
+
+        class ReadOnly:
+            def get_attribute(self, k): return "text"
+            def fill(self, *a, **k): raise RuntimeError("Element is not editable")
+        a.browser.el = lambda ref: ReadOnly()
+        out, err = a.execute("browser_type", {"ref": 4, "text": "03-11-2026"})
+        self.assertTrue(err)
+        self.assertIn("browser_set_value(ref=4", out)
 
 
 class TestSelfUpdate(Base):

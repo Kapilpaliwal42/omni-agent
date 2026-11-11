@@ -378,19 +378,77 @@ Tools:
             raise OllamaError(data["error"])
         return data
 
+    # ---------------------------------------------------- context budget
+    # Big tool results (a web page snapshot is ~8 KB) pile up inside one step and fill num_ctx. Before every
+    # model call, older tool results are shrunk to a short note; the newest ones stay whole.
+
+    KEEP_FULL = 2            # newest tool results kept in full
+    CHARS_PER_TOKEN = 3.2    # rough, a bit pessimistic for mixed code/HTML text
+
+    def estimate_tokens(self, messages: list[dict]) -> int:
+        chars = len(self.system_prompt()) + sum(len(str(m.get("content", ""))) + 20 for m in messages)
+        return int(chars / self.CHARS_PER_TOKEN)
+
+    def context_overflow(self, data: dict) -> bool:
+        """A "length" stop because the INPUT filled the window (tiny reply), not because the reply got long."""
+        if data.get("done_reason") != "length":
+            return False
+        used = (data.get("prompt_eval_count") or 0) + (data.get("eval_count") or 0)
+        return (data.get("eval_count") or 0) < 300 or used >= self.cfg.num_ctx - 64
+
+    @staticmethod
+    def _shrink(m: dict, keep: int) -> bool:
+        text = str(m.get("content", ""))
+        if len(text) <= keep + 120 or "[trimmed:" in text[:keep + 200]:
+            return False
+        head = text[:keep].rsplit("\n", 1)[0] if "\n" in text[:keep] else text[:keep]
+        m["content"] = f"{head}\n[trimmed: this older {m.get('tool_name', 'tool')} output was {len(text)} chars; " \
+                       "call the tool again if you need it]"
+        return True
+
+    def compact(self, messages: list[dict], aggressive: int = 0) -> int:
+        """Shrink old tool results so the conversation fits num_ctx. Returns how many were trimmed."""
+        budget = self.cfg.num_ctx - 4096 - 512           # leave room for the reply (num_predict) and slack
+        tools = [m for m in messages if m.get("role") == "tool"]
+        keep_full = max(self.KEEP_FULL - aggressive, 1)
+        trimmed = 0
+        for m in tools[:-keep_full]:                    # always: older results become a short note
+            trimmed += self._shrink(m, 400)
+        if aggressive or self.estimate_tokens(messages) > budget:
+            for m in tools[:-1]:
+                trimmed += self._shrink(m, 160)
+            last = tools[-1] if tools else None
+            if last and self.estimate_tokens(messages) > budget:     # even the newest result is too big
+                trimmed += self._shrink(last, 3000 if aggressive else 6000)
+            for m in [m for m in messages if m.get("role") in ("assistant", "user")][1:-2]:
+                if self.estimate_tokens(messages) <= budget:
+                    break
+                trimmed += self._shrink(m, 600)
+        if trimmed:
+            self.log(compacted=trimmed, est_tokens=self.estimate_tokens(messages), aggressive=aggressive)
+        return trimmed
+
     def loop(self, messages: list[dict], max_steps: int = MAX_LOOP_STEPS,
              require_action: bool = False) -> tuple[str, bool]:
-        used_tools, nudged, failed_in_row = 0, False, 0
+        used_tools, nudged, failed_in_row, overflow_retries = 0, False, 0, 0
         self._changes_this_loop = set()
         for _ in range(max_steps):
             if self.cancelled:
                 raise Cancelled()
+            self.compact(messages)
             self.emit("thinking")
             data = self.chat(messages)
             if self.cancelled:
                 raise Cancelled()
             msg = data.get("message", {})
             content = msg.get("content", "") or ""
+            if self.context_overflow(data) and overflow_retries < 2:
+                # The input filled the context window, leaving no room to answer. Trim harder and ask again,
+                # instead of stopping with a cut-off reply.
+                overflow_retries += 1
+                self.log(context_full=data.get("prompt_eval_count"), num_ctx=self.cfg.num_ctx, retry=overflow_retries)
+                self.compact(messages, aggressive=overflow_retries)
+                continue
             all_names = set(self.registry.tools)
             native = []
             for c in msg.get("tool_calls") or []:
@@ -411,7 +469,11 @@ Tools:
 
             if not calls:
                 if data.get("done_reason") == "length":
-                    return content.strip() + "\n[output hit the token limit]", False
+                    why = (f"the context window (num_ctx={self.cfg.num_ctx}) is full even after trimming old tool "
+                           "results; start a new conversation or split the task" if self.context_overflow(data)
+                           else "the reply reached the output limit (num_predict=4096); ask for a shorter answer "
+                                "or have it write long content to a file in parts")
+                    return content.strip() + f"\n[stopped: {why}]", False
                 if require_action and used_tools == 0 and not nudged:
                     nudged = True
                     messages.append({"role": "user", "content":

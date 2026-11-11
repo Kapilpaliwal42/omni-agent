@@ -219,6 +219,40 @@ input, select, textarea { font: inherit; color: var(--text); }
 #slash div span { color: var(--muted); }
 #slash div.sel, #slash div:hover { background: var(--panel2); }
 
+/* ---------- shared browser panel */
+#btoggle { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 4px 10px; font-size: 12.5px;
+           display: flex; align-items: center; gap: 6px; color: var(--muted); }
+#btoggle:hover, body.bp-open #btoggle { color: var(--text); border-color: var(--accent); }
+.bdot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.bdot.live { background: var(--ok); }
+#bpanel { display: none; width: min(46vw, 760px); min-width: 380px; flex: none; border-left: 1px solid var(--line);
+          background: var(--panel); flex-direction: column; }
+body.bp-open #bpanel { display: flex; }
+.bp-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.bp-title { font-weight: 600; font-size: 13px; }
+.bp-mode { margin-left: auto; }
+.bp-mode button { padding: 3px 10px; font-size: 12px; }
+.bp-x { border: 0; background: none; color: var(--faint); font-size: 14px; padding: 2px 6px; }
+.bp-bar { display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.bp-btn { border: 1px solid var(--line); background: var(--bg); border-radius: 7px; width: 30px; flex: none; }
+.bp-btn:hover { border-color: var(--accent); }
+#burl { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px;
+        font: 12.5px var(--mono); }
+#burl:focus { outline: none; border-color: var(--accent); }
+#bview { flex: 1; position: relative; overflow: auto; background: #111; outline: none; cursor: default; }
+#bview:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+#bimg { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; cursor: pointer; }
+#bempty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--faint);
+          font-size: 13px; padding: 20px; }
+#bbusy { position: absolute; top: 8px; right: 10px; display: none; }
+#bbusy.on { display: block; }
+.bp-foot { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--line);
+           font-size: 11.5px; color: var(--faint); }
+.bp-foot #bstatus { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1100px) {
+  #bpanel { position: fixed; z-index: 9; inset: 48px 0 0 auto; width: min(92vw, 760px); min-width: 0;
+            box-shadow: -10px 0 40px rgba(0,0,0,.35); }
+}
 @media (max-width: 820px) {
   #side { position: fixed; z-index: 10; inset: 0 auto 0 0; transform: translateX(-100%); transition: transform .2s; }
   body.side-open #side { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.4); }
@@ -266,6 +300,7 @@ input, select, textarea { font: inherit; color: var(--text); }
     <button id="menu" aria-label="Menu">☰</button>
     <span id="wsname"></span>
     <div id="status"><span class="pulse"></span><span id="stext">Connecting…</span></div>
+    <button id="btoggle" title="Show the shared browser"><span class="bdot"></span>Browser</button>
     <button id="theme" title="Toggle theme">◐</button>
   </div>
   <div id="scroll"><div id="log"></div></div>
@@ -280,6 +315,31 @@ input, select, textarea { font: inherit; color: var(--text); }
     </div>
   </div>
 </main>
+
+<aside id="bpanel" aria-label="Shared browser">
+  <div class="bp-head">
+    <span class="bp-title">Shared browser</span>
+    <div class="seg bp-mode" id="bmode">
+      <button data-mode="agent" title="The agent's own Edge profile (sign-ins you make here are kept)">Agent's</button>
+      <button data-mode="attach" title="An Edge window you use yourself; the agent works in it too">My Edge</button>
+    </div>
+    <button class="bp-x" id="bclose" title="Hide panel">✕</button>
+  </div>
+  <div class="bp-bar">
+    <button class="bp-btn" id="bback" title="Back">←</button>
+    <button class="bp-btn" id="breload" title="Reload">↻</button>
+    <input id="burl" spellcheck="false" placeholder="Type an address and press Enter">
+  </div>
+  <div id="bview" tabindex="0" title="Click to interact. While focused, your typing goes to the page.">
+    <img id="bimg" alt="">
+    <div id="bempty">No page open yet.<br>Type an address above, or ask omni to open a site.</div>
+    <div id="bbusy"><span class="spinner"></span></div>
+  </div>
+  <div class="bp-foot">
+    <span id="bstatus"></span>
+    <button class="small-btn" id="bshared" title="Opens an Edge window the agent can work in with you">Start shared Edge</button>
+  </div>
+</aside>
 
 <script>
 "use strict";
@@ -629,6 +689,8 @@ function handle(ev) {
     case "question": questionCard(ev); break;
     case "question_answer": questionAnswer(ev); break;
     case "allow_list": case "schedules_changed": loadState(); break;
+    case "browser_update": onBrowserUpdate(ev); break;
+    case "browser_mode": applyBrowser({ mode: ev.mode, cdp_url: ev.cdp_url }); break;
     case "busy": setBusy(ev.busy); if (!ev.busy) loadState(); break;
     case "planning": planning(ev); break;
     case "plan": plan(ev); break;
@@ -690,6 +752,7 @@ async function loadState() {
   const sel = $("#model"); sel.innerHTML = "";
   (s.models.length ? s.models : [s.model]).forEach(m => sel.appendChild(new Option(m, m)));
   applySettings(s);
+  applyBrowser(s.browser);
   list("#skills", "#skc", s.skills, k => {
     const d = el("div", "item click");
     d.title = "Click to use this skill";
@@ -802,6 +865,115 @@ input.addEventListener("keydown", e => {
 });
 sendBtn.onclick = send;
 document.addEventListener("click", () => { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); }, { once: true });
+
+// ---------- shared browser panel: the agent's browser, live, and yours to click and type in
+const B = { seq: 0, shown: 0, info: {}, mode: "agent", started: false, closedByUser: false, inflight: 0, lastFrameAt: 0 };
+const bimg = $("#bimg"), bview = $("#bview");
+function setPanel(open) {
+  document.body.classList.toggle("bp-open", open);
+  try { localStorage.setItem("omni-bpanel", open ? "1" : "0"); } catch (e) {}
+  if (open) refreshFrame(true);
+}
+function bBusy(on) { B.inflight += on ? 1 : -1; $("#bbusy").classList.toggle("on", B.inflight > 0); }
+function showFrame(seq) {
+  if (seq && seq <= B.shown) return;
+  if (seq) B.shown = seq;            // claim it now, so a second request for the same picture isn't started
+  const n = seq || Date.now();
+  bimg.onload = () => { $("#bempty").style.display = "none"; B.shown = Math.max(B.shown, seq || B.shown); };
+  bimg.src = `/api/browser/frame?t=${encodeURIComponent(TOKEN)}&n=${n}`;
+  B.lastFrameAt = Date.now();
+}
+async function refreshFrame(fresh) {
+  if (!B.started || B.inflight) return;
+  bBusy(true);
+  try {
+    const r = await fetch(`/api/browser/frame?t=${encodeURIComponent(TOKEN)}${fresh ? "&fresh=1" : ""}`);
+    if (r.status === 200) {
+      const blob = await r.blob(); const seq = +r.headers.get("X-Frame-Seq") || 0;
+      bimg.onload = () => { $("#bempty").style.display = "none"; URL.revokeObjectURL(bimg.src); };
+      bimg.src = URL.createObjectURL(blob); B.shown = Math.max(B.shown, seq); B.lastFrameAt = Date.now();
+    }
+  } catch (e) {} finally { bBusy(false); }
+}
+setInterval(() => {   // keep the picture current while the panel is open (pages change on their own too)
+  if (document.body.classList.contains("bp-open") && !document.hidden && Date.now() - B.lastFrameAt > 2500) refreshFrame(true);
+}, 1200);
+function applyBrowser(info) {
+  if (!info) { $("#btoggle").style.display = "none"; return; }
+  Object.assign(B.info, info);
+  if (info.mode) B.mode = info.mode;
+  if (info.started !== undefined) B.started = info.started;
+  document.querySelectorAll("#bmode button").forEach(b => b.classList.toggle("on", b.dataset.mode === B.mode));
+  $(".bdot").classList.toggle("live", !!B.started);
+  if (document.activeElement !== $("#burl") && B.info.url) $("#burl").value = B.info.url === "about:blank" ? "" : B.info.url;
+  $("#bstatus").textContent = (B.mode === "attach" ? `Your Edge (${B.info.cdp_url || "port 9222"})` : "Agent's own profile")
+    + (B.info.title ? ` · ${B.info.title}` : "") + (busy ? " · omni is working; your input goes to the same page" : "");
+  $("#bshared").style.display = B.mode === "attach" ? "" : "none";
+}
+function onBrowserUpdate(ev) {
+  B.started = true; applyBrowser(ev);
+  if (!document.body.classList.contains("bp-open") && !B.closedByUser) setPanel(true);
+  if (document.body.classList.contains("bp-open")) showFrame(ev.frame);
+}
+async function binput(body) {
+  bBusy(true);
+  try {
+    const r = await api("/api/browser/input", body);
+    if (r.browser) applyBrowser(r.browser);
+    if (r.status !== 200) { $("#bstatus").textContent = r.message || "That didn't work."; return; }
+    B.started = true; showFrame(r.seq);
+  } finally { bBusy(false); }
+}
+function pageXY(e) {
+  const w = B.info.width || bimg.naturalWidth, h = B.info.height || bimg.naturalHeight;
+  return { x: Math.round(e.offsetX * w / bimg.clientWidth), y: Math.round(e.offsetY * h / bimg.clientHeight) };
+}
+bimg.addEventListener("click", e => { bview.focus(); binput({ action: "click", ...pageXY(e) }); });
+let typed = "", typeTimer = null;
+function flushTyped() { if (typed) { const t = typed; typed = ""; binput({ action: "type", text: t }); } }
+const KEYMAP = { Enter: "Enter", Backspace: "Backspace", Tab: "Tab", Escape: "Escape", Delete: "Delete",
+                 ArrowLeft: "ArrowLeft", ArrowRight: "ArrowRight", ArrowUp: "ArrowUp", ArrowDown: "ArrowDown",
+                 Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown" };
+bview.addEventListener("keydown", e => {
+  if (!B.started) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") return;           // handled by the paste event
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "l") { e.preventDefault(); $("#burl").focus(); $("#burl").select(); return; }
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault(); typed += e.key; clearTimeout(typeTimer); typeTimer = setTimeout(flushTyped, 140); return;
+  }
+  const k = KEYMAP[e.key];
+  if (k || e.ctrlKey) {
+    e.preventDefault(); flushTyped();
+    binput({ action: "key", key: e.ctrlKey && e.key.length === 1 ? `Control+${e.key.toLowerCase()}` : k });
+  }
+});
+bview.addEventListener("paste", e => { const t = e.clipboardData.getData("text"); if (t) { e.preventDefault(); flushTyped(); binput({ action: "type", text: t }); } });
+let wheelDy = 0, wheelTimer = null;
+bview.addEventListener("wheel", e => {
+  if (!B.started) return;
+  e.preventDefault(); wheelDy += e.deltaY;
+  clearTimeout(wheelTimer); wheelTimer = setTimeout(() => { const dy = wheelDy; wheelDy = 0; binput({ action: "scroll", dy }); }, 160);
+}, { passive: false });
+$("#burl").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); binput({ action: "navigate", url: $("#burl").value }); bview.focus(); } });
+$("#bback").onclick = () => binput({ action: "back" });
+$("#breload").onclick = () => binput({ action: "reload" });
+$("#btoggle").onclick = () => { const open = !document.body.classList.contains("bp-open"); B.closedByUser = !open; setPanel(open); };
+$("#bclose").onclick = () => { B.closedByUser = true; setPanel(false); };
+async function setBrowserMode(mode, start) {
+  $("#bstatus").textContent = start ? "Starting a shared Edge window…" : "Switching…";
+  const r = await api("/api/browser/mode", { mode, start: !!start });
+  $("#bstatus").textContent = r.message || "";
+  if (r.status !== 200) return;
+  B.mode = mode; B.shown = 0; B.started = false;
+  $("#bempty").style.display = ""; bimg.removeAttribute("src");
+  loadState().then(() => refreshFrame(true));
+}
+document.querySelectorAll("#bmode button").forEach(b => b.onclick = () => {
+  if (b.dataset.mode === B.mode) return;
+  setBrowserMode(b.dataset.mode, false);
+});
+$("#bshared").onclick = () => setBrowserMode("attach", true);
+try { if (localStorage.getItem("omni-bpanel") === "1") document.body.classList.add("bp-open"); } catch (e) {}
 
 welcome();
 connect();
