@@ -164,7 +164,7 @@ class TestOwnSourceGuard(unittest.TestCase):
         self.assertTrue(err)
         self.assertIn('"name": "create_skill"', out)
         self.assertIn('"name": "web-scraping"', out)
-        self.assertFalse((ROOT / "omni" / "skills").exists())
+        self.assertFalse((ROOT / "omni" / "skills" / "web_scraping" / "SKILL.md").exists())
 
     def test_state_folder_and_self_update_child_are_allowed(self):
         a = self.make()

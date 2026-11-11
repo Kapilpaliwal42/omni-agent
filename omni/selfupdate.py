@@ -141,6 +141,9 @@ def register(agent):
     root = Path(agent.cfg.extra.get("self_root") or ROOT)     # the agent's own repo (tests point it elsewhere)
     g = lambda *a, cwd=root: git(*a, cwd=cwd)
     TEST_CMD = agent.python_cmd(TEST_ARGS)
+    if (root / ".git").exists():
+        for note in clean_orphans(root, STATE / "selfupdate"):
+            agent.print(f"[self-update] {note}")
 
     def child_agent(wt: Path, request: str):
         from . import builtin, code
@@ -294,9 +297,10 @@ def register(agent):
     def self_improve(request: str) -> tuple[str, bool]:
         if not (root / ".git").exists():
             return f"{root} is not a git repository, so self-update can't make a safe, revertible change.", True
-        code, dirty = g("status", "--porcelain", "--untracked-files=no")
+        code, status = g("status", "--porcelain", "--untracked-files=no")
+        dirty = code_changes(status)
         if dirty:
-            return ("The agent's own repo has uncommitted changes:\n" + dirty[:800]
+            return ("The agent's own code has uncommitted changes:\n" + "\n".join(dirty)[:800]
                     + "\nCommit or stash them first, so a self-update can be reviewed and reverted on its own."), True
         notes: list[str] = []
         res: dict = {}
@@ -356,6 +360,49 @@ def register(agent):
                  "own files. Describe the change in detail: what, where, and how it should behave.",
                  {"request": {"type": "string", "description": "exactly what to change and how it should behave"}},
                  ["request"], self_improve, "self"))
+
+
+CODE_PATHS = ("omni/", "tests/", "skills/", "agent.py", "app.py", "rules.md", "requirements.txt")
+
+
+def code_changes(porcelain: str) -> list[str]:
+    """Uncommitted changes that matter to a self-update: the agent's code, tests, rules and skills.
+    README edits or benchmark output don't block it (a self-update's merge never touches them)."""
+    out = []
+    for line in porcelain.splitlines():
+        parts = line.strip().split(None, 1)          # "XY path" (the leading space may have been trimmed)
+        if len(parts) < 2:
+            continue
+        path = parts[1].strip().strip('"').split(" -> ")[-1].strip('"')
+        if path.startswith(CODE_PATHS):
+            out.append(line)
+    return out
+
+
+def clean_orphans(root: Path, base: Path, max_age_hours: float = 6) -> list[str]:
+    """Self-update attempts left behind when the agent was closed mid-update: save their work as a patch in
+    .omni/trash/, then remove the worktree and its branch. Recent ones are left alone (may still be running)."""
+    import time
+    notes = []
+    if not base.is_dir():
+        return notes
+    for wt in sorted(p for p in base.iterdir() if p.is_dir() and (p / ".git").exists()):
+        newest = max((f.stat().st_mtime for f in wt.rglob("*") if ".git" not in f.parts and f.is_file()),
+                     default=wt.stat().st_mtime)
+        if time.time() - newest < max_age_hours * 3600:
+            continue
+        git("add", "-A", cwd=wt)
+        _, diff = git("diff", "--cached", cwd=wt)
+        trash = STATE / "trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        patch = trash / f"selfupdate-{wt.name}.patch"
+        if diff.strip():
+            patch.write_text(diff + "\n", encoding="utf-8")
+        git("worktree", "remove", "--force", str(wt), cwd=root)
+        git("branch", "-D", f"self/{wt.name}", cwd=root)
+        notes.append(f"cleaned up interrupted attempt {wt.name}" + (f" (its work is saved in {patch})" if diff.strip() else ""))
+    git("worktree", "prune", cwd=root)
+    return notes
 
 
 def _per_file_added(diff: str) -> list[tuple[str, str]]:

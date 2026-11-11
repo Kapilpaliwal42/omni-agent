@@ -710,6 +710,43 @@ class TestSelfUpdate(Base):
         self.assertIn("How to make the usual changes", step["messages"][0]["content"])
         self.assertIn("omni/feature.py", step["messages"][0]["content"])
 
+    def test_non_code_changes_dont_block(self):
+        (self.root / "README.md").write_text("docs\n")
+        (self.root / "bench").mkdir()
+        (self.root / "bench" / "results.jsonl").write_text("{}\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "docs and results")
+        (self.root / "README.md").write_text("docs changed\n")
+        (self.root / "bench" / "results.jsonl").write_text("{}\n{}\n")
+        self.answers = ["y"]
+        a, (out, err) = self.improve(self.child_script(2))
+        self.assertFalse(err, out)
+        self.assertEqual((self.root / "README.md").read_text(), "docs changed\n")    # left as it was
+
+    def test_interrupted_attempts_are_saved_and_cleaned(self):
+        import time
+        base = Path(tempfile.mkdtemp(prefix="omni-wt-"))
+        old, new = base / "20200101-000000-a1", base / "29990101-000000-a1"
+        for wt in (old, new):
+            git(self.root, "worktree", "add", "-q", "-b", f"self/{wt.name}", str(wt), "HEAD")
+            (wt / "omni" / "feature.py").write_text("VALUE = 7\n")
+        past = time.time() - 24 * 3600
+        for f in old.rglob("*"):
+            if ".git" not in f.parts:
+                os.utime(f, (past, past))
+        notes = selfupdate.clean_orphans(self.root, base)
+        self.assertEqual(len(notes), 1)
+        self.assertFalse(old.exists())
+        self.assertTrue(new.exists())                                    # recent: may still be running
+        self.assertNotIn(f"self/{old.name}", git(self.root, "branch").stdout)
+        patch = selfupdate.STATE / "trash" / f"selfupdate-{old.name}.patch"
+        self.assertIn("+VALUE = 7", patch.read_text())
+        git(self.root, "worktree", "remove", "--force", str(new))
+
+    def test_code_changes_filter(self):
+        st = " M README.md\n M bench/results/x.jsonl\n M omni/core.py\nR  tests/a.py -> tests/b.py\n M rules.md"
+        self.assertEqual(selfupdate.code_changes(st), [" M omni/core.py", "R  tests/a.py -> tests/b.py", " M rules.md"])
+
     def test_dirty_repo_refused(self):
         (self.root / "omni" / "feature.py").write_text("VALUE = 9\n")
         a = self.agent(Script(), extra={"self_root": str(self.root)})
